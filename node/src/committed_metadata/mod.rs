@@ -42,7 +42,7 @@ impl Decodable for TimeVec {
     }
 }
 
-#[derive(Clone, Debug, PartialEq,Serialize,Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct CommittedMetadata {
     pub transactions: Vec<Transaction>,
     pub parents: HashSet<BeadHash>,
@@ -55,7 +55,7 @@ pub struct CommittedMetadata {
     //the weaker target locallay apart from mainnet target ranging between the mainnet target and
     //minimum possible target
     pub weak_target: CompactTarget,
-    pub miner_ip: String
+    pub miner_ip: String,
 }
 
 impl Encodable for CommittedMetadata {
