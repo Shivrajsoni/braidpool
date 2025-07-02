@@ -1,6 +1,5 @@
 use clap::Parser;
 use futures::StreamExt;
-use libp2p::kad::RecordKey;
 use libp2p::{
     core::multiaddr::Multiaddr,
     floodsub, identify,
@@ -11,22 +10,30 @@ use libp2p::{
     PeerId,
 };
 use node::{
-    bead,
+    bead::{BeadRequest, BeadResponse},
     behaviour::{self, BEAD_ANNOUNCE_PROTOCOL},
 };
+use std::collections::HashSet;
 use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
-use std::{collections::HashSet, error::Error};
-use std::{fs, time::Duration};
-use tokio::sync::mpsc;
+use std::{error::Error, fs, time::Duration};
+use tokio::sync::mpsc::{self, Receiver, Sender};
 
+mod bead;
 mod block_template;
+mod braid;
+mod braid_manager;
 mod cli;
+mod committed_metadata;
 mod config;
 mod rpc;
+mod rpc_server;
+mod uncommitted_metadata;
+mod utils;
 mod zmq;
-
 use behaviour::{BraidPoolBehaviour, BraidPoolBehaviourEvent};
+use braid_manager::{BraidCommand, BraidManager};
+use rpc_server::{create_test_bead, parse_arguments, run_rpc_server};
 
 use crate::behaviour::KADPROTOCOLNAME;
 //boot nodes peerIds
@@ -39,9 +46,67 @@ const ADDR_REFRENCE: &str =
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
+    let (sender, mut receiver): (Sender<String>, Receiver<String>) = mpsc::channel(32);
+
     let args = cli::Cli::parse();
+    if args.rpc != None {}
     setup_logging();
     setup_tracing()?;
+
+    // Initialize braid with empty genesis beads initially
+    // Initializing the braid_manager also initializes the braid
+    let genesis_beads = HashSet::new();
+    let (braid_manager, braid_tx) = BraidManager::new(genesis_beads);
+
+    tokio::spawn(async move {
+        braid_manager.run().await;
+    });
+
+    let test_bead1 = create_test_bead(1, None); // Genesis bead
+    let test_bead2 = create_test_bead(2, Some(test_bead1.block_header.block_hash())); // Child of first bead
+
+    // Add the second bead (which depends on the genesis bead)
+    let (tx1, rx1) = tokio::sync::oneshot::channel();
+    braid_tx
+        .send(BraidCommand::AddBead {
+            bead: test_bead1.clone(),
+            respond_to: tx1,
+        })
+        .await
+        .expect("Failed to send bead");
+
+    let status1 = rx1.await.expect("Failed to receive response");
+    log::info!("First bead add status: {:?}", status1);
+
+    let (tx2, rx2) = tokio::sync::oneshot::channel();
+    braid_tx
+        .send(BraidCommand::AddBead {
+            bead: test_bead2.clone(),
+            respond_to: tx2,
+        })
+        .await
+        .expect("Failed to send bead");
+
+    let status2 = rx2.await.expect("Failed to receive response");
+    log::info!("Second bead add status: {:?}", status2);
+
+    if args.rpc == None {
+        //running the rpc server
+        tokio::spawn(run_rpc_server(braid_tx.clone()));
+    } else if args.rpc != None {
+        let server_address = tokio::spawn(run_rpc_server(braid_tx.clone()));
+        let socket_address = server_address.await.unwrap().unwrap();
+        tokio::spawn(parse_arguments(
+            args.clone(),
+            socket_address.clone(),
+            sender.clone(),
+        ));
+
+        while let Some(message) = receiver.recv().await {
+            log::info!("RPC RESPONSE = {message}");
+            break;
+        }
+    }
     let datadir = shellexpand::full(args.datadir.to_str().unwrap()).unwrap();
     match fs::metadata(&*datadir) {
         Ok(m) => {
@@ -344,15 +409,15 @@ async fn main() -> Result<(), Box<dyn Error>> {
                                     channel,
                                 } => {
                                     match request {
-                                        bead::BeadRequest::GetBeads(hashes) => {
+                                        BeadRequest::GetBeads(hashes) => {
                                             let beads = Vec::new();
                                             swarm.behaviour_mut().respond_with_beads(channel, beads);
                                         }
-                                        bead::BeadRequest::GetTips => {
+                                        BeadRequest::GetTips => {
                                             let tips = HashSet::new();
                                             swarm.behaviour_mut().respond_with_tips(channel, tips);
                                         }
-                                        bead::BeadRequest::GetGenesis => {
+                                        BeadRequest::GetGenesis => {
                                             let genesis = HashSet::new();
                                             swarm.behaviour_mut().respond_with_genesis(channel, genesis);
                                         }
@@ -363,16 +428,16 @@ async fn main() -> Result<(), Box<dyn Error>> {
                                     response,
                                 } => {
                                     match response {
-                                        bead::BeadResponse::Beads(beads) => {
+                                        BeadResponse::Beads(beads) => {
                                             // Handle beads
                                         }
-                                        bead::BeadResponse::Tips(tips) => {
+                                        BeadResponse::Tips(tips) => {
                                             // Handle tips
                                         }
-                                        bead::BeadResponse::Genesis(genesis) => {
+                                        BeadResponse::Genesis(genesis) => {
                                             // Handle genesis
                                         }
-                                        bead::BeadResponse::Error(error) => {
+                                        BeadResponse::Error(error) => {
                                             // Handle error
                                         }
                                     };
@@ -428,3 +493,8 @@ fn setup_tracing() -> Result<(), Box<dyn Error>> {
 
     Ok(())
 }
+/*
+
+
+
+*/

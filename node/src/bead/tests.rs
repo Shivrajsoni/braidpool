@@ -38,7 +38,6 @@ fn test_serialized_committed_metadata() {
     let public_key = "020202020202020202020202020202020202020202020202020202020202020202"
         .parse::<bitcoin::PublicKey>()
         .unwrap();
-    let socket = bitcoin::p2p::address::AddrV2::Ipv4(Ipv4Addr::new(127, 0, 0, 1));
     let time_val = Time::from_consensus(1653195600).unwrap();
     let parent_hash_set: HashSet<BlockHash> = HashSet::new();
     let time_hash_set = TimeVec(Vec::new());
@@ -46,11 +45,11 @@ fn test_serialized_committed_metadata() {
     let min_target = CompactTarget::from_consensus(1);
     let test_committed_metadata = TestCommittedMetadataBuilder::new()
         .comm_pub_key(public_key)
-        .miner_ip(socket)
+        .miner_ip(String::from("127.0.0.1"))
         .start_timestamp(time_val)
         .parents(parent_hash_set)
         .parent_bead_timestamps(time_hash_set)
-        .payout_address(_address)
+        .payout_address(String::from("127.0.0.1:8888"))
         .transactions(vec![])
         .min_target(min_target)
         .weak_target(weak_target)
@@ -107,7 +106,6 @@ fn test_serialized_bead() {
     let public_key = "020202020202020202020202020202020202020202020202020202020202020202"
         .parse::<bitcoin::PublicKey>()
         .unwrap();
-    let socket = bitcoin::p2p::address::AddrV2::Ipv4(Ipv4Addr::new(127, 0, 0, 1));
     let time_hash_set = TimeVec(Vec::new());
     let parent_hash_set: HashSet<BlockHash> = HashSet::new();
     let weak_target = CompactTarget::from_consensus(32);
@@ -115,11 +113,11 @@ fn test_serialized_bead() {
     let time_val = Time::from_consensus(1653195600).unwrap();
     let test_committed_metadata = TestCommittedMetadataBuilder::new()
         .comm_pub_key(public_key)
-        .miner_ip(socket)
+        .miner_ip(String::from("127.0.0.1"))
         .start_timestamp(time_val)
         .parents(parent_hash_set)
         .parent_bead_timestamps(time_hash_set)
-        .payout_address(_address)
+        .payout_address(String::from("127.0.0.1:8888"))
         .min_target(min_target)
         .weak_target(weak_target)
         .transactions(vec![])
@@ -182,7 +180,6 @@ fn test_bead_response_serialization() {
     let public_key = "020202020202020202020202020202020202020202020202020202020202020202"
         .parse::<bitcoin::PublicKey>()
         .unwrap();
-    let socket = bitcoin::p2p::address::AddrV2::Ipv4(Ipv4Addr::new(127, 0, 0, 1));
     let time_hash_set = TimeVec(Vec::new());
     let parent_hash_set: HashSet<BlockHash> = HashSet::new();
     let weak_target = CompactTarget::from_consensus(32);
@@ -190,11 +187,11 @@ fn test_bead_response_serialization() {
     let time_val = Time::from_consensus(1653195600).unwrap();
     let test_committed_metadata = TestCommittedMetadataBuilder::new()
         .comm_pub_key(public_key)
-        .miner_ip(socket)
+        .miner_ip(String::from("127.0.0.1"))
         .start_timestamp(time_val)
         .parents(parent_hash_set)
         .parent_bead_timestamps(time_hash_set)
-        .payout_address(_address)
+        .payout_address(String::from("127.0.0.1:8888"))
         .min_target(min_target)
         .weak_target(weak_target)
         .transactions(vec![])

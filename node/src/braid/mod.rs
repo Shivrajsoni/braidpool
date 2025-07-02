@@ -9,6 +9,7 @@ pub const FIXED_BEAD_WORK: u32 = 1;
 
 pub(crate) struct Cohort(HashSet<usize>);
 
+#[derive(Clone, Debug)]
 pub enum AddBeadStatus {
     DagAlreadyContainsBead,
     InvalidBead,
@@ -55,9 +56,26 @@ impl Braid {
     /// Attempts to extend the braid with the given bead.
     /// Returns true if the bead successfully extended the braid, false otherwise.
     pub fn extend(&mut self, bead: &Bead) -> bool {
-        // No parents: bad block
+        // Handle genesis beads (no parents) - add them to the genesis set and beads
         if bead.committed_metadata.parents.is_empty() {
-            return false;
+            // Check if we already have this bead
+            let bead_hash = bead.block_header.block_hash();
+            if self
+                .beads
+                .iter()
+                .any(|b| b.block_header.block_hash() == bead_hash)
+            {
+                return false; // Already seen this bead
+            }
+
+            // Add the genesis bead
+            self.beads.push(bead.clone());
+            let new_bead_index = self.beads.len() - 1;
+            self.bead_index_mapping.insert(bead_hash, new_bead_index);
+            self.genesis_beads.insert(new_bead_index);
+            self.tips.insert(new_bead_index);
+
+            return true;
         }
         // Don't have all parents
         for parent_hash in &bead.committed_metadata.parents {

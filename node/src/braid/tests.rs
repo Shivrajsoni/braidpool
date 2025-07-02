@@ -73,7 +73,6 @@ fn emit_bead() -> Bead {
     let test_sock_add = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), 8888);
     let _address = P2P_Address::new(&test_sock_add.clone(), ServiceFlags::NONE);
     let public_key = random_public_key;
-    let socket = bitcoin::p2p::address::AddrV2::Ipv4(Ipv4Addr::new(127, 0, 0, 1));
     let time_hash_set = TimeVec(Vec::new());
     let parent_hash_set: HashSet<BlockHash> = HashSet::new();
     let weak_target = CompactTarget::from_consensus(32);
@@ -82,11 +81,11 @@ fn emit_bead() -> Bead {
 
     let committed_metadata = TestCommittedMetadataBuilder::new()
         .comm_pub_key(public_key)
-        .miner_ip(socket)
+        .miner_ip(String::from("127.0.0.1"))
         .start_timestamp(time_val)
         .parents(parent_hash_set)
         .parent_bead_timestamps(time_hash_set)
-        .payout_address(_address)
+        .payout_address(String::from("127.0.0.1:8888"))
         .min_target(min_target)
         .weak_target(weak_target)
         .transactions(vec![])
