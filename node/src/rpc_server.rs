@@ -1,12 +1,10 @@
 use crate::bead::Bead;
-use crate::braid;
 use crate::braid::AddBeadStatus;
 use crate::braid::Braid;
 use crate::error::BraidRPCError;
 use crate::utils::create_test_bead;
 use crate::utils::BeadHash;
 use clap::Subcommand;
-use futures::future::join_all;
 use jsonrpsee::core::async_trait;
 use jsonrpsee::core::client::ClientT;
 use jsonrpsee::core::middleware::Batch;
@@ -48,6 +46,15 @@ pub enum RpcCommand {
 
     /// Get current DAG tips
     GetTips,
+
+    /// Get genesis beads (root nodes with no parents)
+    GetGeneses,
+
+    /// Get beads in the ith last cohort (default 0 for latest cohort)
+    GetBeadsInCohort {
+        /// The index from the end (0 = latest cohort, 1 = second last, etc.)
+        i: Option<usize>,
+    },
 }
 //parsing the inital rpc command line all
 pub async fn parse_arguments(cli_command: RpcCommand, server_addr: SocketAddr) -> () {
@@ -86,6 +93,19 @@ pub async fn parse_arguments(cli_command: RpcCommand, server_addr: SocketAddr) -
         RpcCommand::GetTips => {
             let method_params = ArrayParams::new();
             let rpc_method = String::from("gettips");
+
+            (rpc_method, method_params)
+        }
+        RpcCommand::GetGeneses => {
+            let method_params = ArrayParams::new();
+            let rpc_method = String::from("getgeneses");
+
+            (rpc_method, method_params)
+        }
+        RpcCommand::GetBeadsInCohort { i } => {
+            let mut method_params = ArrayParams::new();
+            method_params.insert(i.unwrap_or(0)).unwrap();
+            let rpc_method = String::from("getbeadsincohort");
 
             (rpc_method, method_params)
         }
@@ -141,11 +161,17 @@ pub trait Rpc {
     #[method(name = "gettips")]
     async fn get_tips(&self) -> Result<String, ErrorObjectOwned>;
 
+    #[method(name = "getgeneses")]
+    async fn get_geneses(&self) -> Result<String, ErrorObjectOwned>;
+
     #[method(name = "getbeadcount")]
     async fn get_bead_count(&self) -> Result<String, ErrorObjectOwned>;
 
     #[method(name = "getcohortcount")]
     async fn get_cohort_count(&self) -> Result<String, ErrorObjectOwned>;
+
+    #[method(name = "getbeadsincohort")]
+    async fn get_beads_in_cohort(&self, i: usize) -> Result<String, ErrorObjectOwned>;
 }
 
 // RPC Server implementation using channels
@@ -219,6 +245,20 @@ impl RpcServer for RpcServerImpl {
             .map_err(|_| ErrorObjectOwned::owned(2, "Internal error", None::<()>))
     }
 
+    async fn get_geneses(&self) -> Result<String, ErrorObjectOwned> {
+        let braid_data = self.braid_arc.read().await;
+        let geneses: Vec<BeadHash> = braid_data
+            .genesis_beads
+            .iter()
+            .map(|&index| braid_data.beads[index].block_header.block_hash())
+            .collect();
+        log::info!("Get geneses request received from client");
+        let geneses_str: Vec<String> = geneses.iter().map(|h| h.to_string()).collect();
+
+        serde_json::to_string(&geneses_str)
+            .map_err(|_| ErrorObjectOwned::owned(2, "Internal error", None::<()>))
+    }
+
     async fn get_bead_count(&self) -> Result<String, ErrorObjectOwned> {
         let braid_data = self.braid_arc.read().await;
         let count = braid_data.beads.len();
@@ -232,6 +272,50 @@ impl RpcServer for RpcServerImpl {
         let count = braid_data.cohorts.len();
 
         Ok(count.to_string())
+    }
+
+    async fn get_beads_in_cohort(&self, i: usize) -> Result<String, ErrorObjectOwned> {
+        let braid_data = self.braid_arc.read().await;
+        log::info!(
+            "Get beads in cohort request received from client with index: {}",
+            i
+        );
+
+        let cohort_count = braid_data.cohorts.len();
+
+        if cohort_count == 0 {
+            return Err(ErrorObjectOwned::owned(
+                5,
+                "No cohorts available",
+                None::<()>,
+            ));
+        }
+
+        if i >= cohort_count {
+            return Err(ErrorObjectOwned::owned(
+                6,
+                "Cohort index out of bounds",
+                None::<()>,
+            ));
+        }
+
+        // Get the ith last cohort (0-indexed)
+        let cohort_index = cohort_count - 1 - i;
+        let cohort = &braid_data.cohorts[cohort_index];
+
+        let bead_hashes: Vec<String> = cohort
+            .bead_indices()
+            .iter()
+            .map(|&bead_index| {
+                braid_data.beads[bead_index]
+                    .block_header
+                    .block_hash()
+                    .to_string()
+            })
+            .collect();
+
+        serde_json::to_string(&bead_hashes)
+            .map_err(|_| ErrorObjectOwned::owned(2, "Internal error", None::<()>))
     }
 }
 struct LoggingMiddleware<S>(S);
@@ -300,7 +384,7 @@ pub async fn test_extend_rpc() {
     let test_bead1 = create_test_bead(1, None);
     let genesis_beads = vec![test_bead1.clone()];
 
-    let braid: Arc<RwLock<braid::Braid>> = Arc::new(RwLock::new(braid::Braid::new(genesis_beads)));
+    let braid: Arc<RwLock<Braid>> = Arc::new(RwLock::new(Braid::new(genesis_beads)));
 
     let _ = run_rpc_server(Arc::clone(&braid)).await.unwrap();
 
@@ -333,7 +417,7 @@ pub async fn test_same_bead_extend() {
     let test_bead1 = create_test_bead(1, None);
     let genesis_beads = vec![test_bead1.clone()];
 
-    let braid: Arc<RwLock<braid::Braid>> = Arc::new(RwLock::new(braid::Braid::new(genesis_beads)));
+    let braid: Arc<RwLock<Braid>> = Arc::new(RwLock::new(Braid::new(genesis_beads)));
 
     //Initializing the test server
     let rpc_middleware =
@@ -344,7 +428,7 @@ pub async fn test_same_bead_extend() {
         .await
         .unwrap();
     let rpc_impl = RpcServerImpl::new(braid);
-    let handle = server.start(rpc_impl.into_rpc());
+    let _handle = server.start(rpc_impl.into_rpc());
 
     let server_addr = "127.0.0.1:8889";
     let target_uri = format!("http://{}", server_addr);
@@ -358,7 +442,7 @@ pub async fn test_same_bead_extend() {
     params.insert(bead_json_str).unwrap();
 
     //Extending the bead
-    let response_original: Result<String, jsonrpsee::core::ClientError> =
+    let _response_original: Result<String, jsonrpsee::core::ClientError> =
         client.request("addbead", params.clone()).await;
 
     //Extending the same bead again bead
@@ -378,7 +462,7 @@ pub async fn test_cohort_count_rpc() {
 
     let genesis_beads = vec![test_bead_1.clone()];
 
-    let braid: Arc<RwLock<braid::Braid>> = Arc::new(RwLock::new(braid::Braid::new(genesis_beads)));
+    let braid: Arc<RwLock<Braid>> = Arc::new(RwLock::new(Braid::new(genesis_beads)));
     //Initializing the test server
     let rpc_middleware =
         jsonrpsee::server::middleware::rpc::RpcServiceBuilder::new().layer_fn(LoggingMiddleware);
@@ -388,7 +472,7 @@ pub async fn test_cohort_count_rpc() {
         .await
         .unwrap();
     let rpc_impl = RpcServerImpl::new(braid);
-    let handle = server.start(rpc_impl.into_rpc());
+    let _handle = server.start(rpc_impl.into_rpc());
 
     let server_addr = "127.0.0.1:9000";
     let target_uri = format!("http://{}", server_addr);
@@ -433,4 +517,116 @@ pub async fn test_cohort_count_rpc() {
         client.request("getcohortcount", ArrayParams::new()).await;
 
     assert_eq!(response_cohort_cnt.unwrap(), "4".to_string());
+}
+
+#[tokio::test]
+pub async fn test_get_beads_in_cohort_rpc() {
+    let test_bead_1 = create_test_bead(1, None);
+    let test_bead_2 = create_test_bead(2, Some(test_bead_1.block_header.block_hash()));
+    let test_bead_3 = create_test_bead(3, Some(test_bead_2.block_header.block_hash()));
+
+    let genesis_beads = vec![test_bead_1.clone()];
+
+    let braid: Arc<RwLock<Braid>> = Arc::new(RwLock::new(Braid::new(genesis_beads)));
+
+    {
+        let mut braid_data = braid.write().await;
+        braid_data.extend(&test_bead_2);
+        braid_data.extend(&test_bead_3);
+    }
+
+    let rpc_middleware =
+        jsonrpsee::server::middleware::rpc::RpcServiceBuilder::new().layer_fn(LoggingMiddleware);
+    let server = jsonrpsee::server::Server::builder()
+        .set_rpc_middleware(rpc_middleware)
+        .build("127.0.0.1:9001")
+        .await
+        .unwrap();
+    let rpc_impl = RpcServerImpl::new(braid);
+    let _handle = server.start(rpc_impl.into_rpc());
+
+    let server_addr = "127.0.0.1:9001";
+    let target_uri = format!("http://{}", server_addr);
+    let client: HttpClient = HttpClient::builder().build(target_uri).unwrap();
+
+    // Test getting beads in latest cohort (i=0)
+    let mut params = ArrayParams::new();
+    params.insert(0).unwrap();
+    let response: Result<String, jsonrpsee::core::ClientError> =
+        client.request("getbeadsincohort", params).await;
+
+    assert!(response.is_ok());
+    let beads_json = response.unwrap();
+    let beads: Vec<String> = serde_json::from_str(&beads_json).unwrap();
+    assert_eq!(beads.len(), 1); // Latest cohort should have 1 bead (test_bead_3)
+
+    // Test getting beads in second-to-last cohort (i=1)
+    let mut params = ArrayParams::new();
+    params.insert(1).unwrap();
+    let response: Result<String, jsonrpsee::core::ClientError> =
+        client.request("getbeadsincohort", params).await;
+
+    assert!(response.is_ok());
+    let beads_json = response.unwrap();
+    let beads: Vec<String> = serde_json::from_str(&beads_json).unwrap();
+    assert_eq!(beads.len(), 1); // Second-to-last cohort should have 1 bead (test_bead_2)
+
+    // Test out of bounds
+    let mut params = ArrayParams::new();
+    params.insert(10).unwrap();
+    let response: Result<String, jsonrpsee::core::ClientError> =
+        client.request("getbeadsincohort", params).await;
+
+    assert!(response.is_err()); // Should fail for out of bounds index
+}
+
+#[tokio::test]
+pub async fn test_get_geneses_rpc() {
+    let test_bead_1 = create_test_bead(1, None);
+    let test_bead_2 = create_test_bead(2, None);
+    let test_bead_3 = create_test_bead(3, Some(test_bead_1.block_header.block_hash()));
+
+    // Create braid with multiple genesis beads
+    let genesis_beads = vec![test_bead_1.clone(), test_bead_2.clone()];
+
+    let braid: Arc<RwLock<Braid>> = Arc::new(RwLock::new(Braid::new(genesis_beads)));
+
+    {
+        let mut braid_data = braid.write().await;
+        braid_data.extend(&test_bead_3);
+    }
+
+    let rpc_middleware =
+        jsonrpsee::server::middleware::rpc::RpcServiceBuilder::new().layer_fn(LoggingMiddleware);
+    let server = jsonrpsee::server::Server::builder()
+        .set_rpc_middleware(rpc_middleware)
+        .build("127.0.0.1:9002")
+        .await
+        .unwrap();
+    let rpc_impl = RpcServerImpl::new(braid);
+    let _handle = server.start(rpc_impl.into_rpc());
+
+    let server_addr = "127.0.0.1:9002";
+    let target_uri = format!("http://{}", server_addr);
+    let client: HttpClient = HttpClient::builder().build(target_uri).unwrap();
+
+    let response: Result<String, jsonrpsee::core::ClientError> =
+        client.request("getgeneses", ArrayParams::new()).await;
+
+    assert!(response.is_ok());
+    let geneses_json = response.unwrap();
+    let geneses: Vec<String> = serde_json::from_str(&geneses_json).unwrap();
+
+    // Should have 2 genesis beads
+    assert_eq!(geneses.len(), 2);
+
+    // Verify if the genesis beads are the correct ones
+    let expected_hashes: Vec<String> = vec![
+        test_bead_1.block_header.block_hash().to_string(),
+        test_bead_2.block_header.block_hash().to_string(),
+    ];
+
+    for hash in expected_hashes {
+        assert!(geneses.contains(&hash));
+    }
 }

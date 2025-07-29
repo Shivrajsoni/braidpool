@@ -8,6 +8,13 @@ use std::collections::{HashMap, HashSet};
 #[derive(Clone, Debug, Serialize, PartialEq)]
 
 pub struct Cohort(HashSet<usize>);
+
+impl Cohort {
+    /// Get the bead indices in this cohort
+    pub fn bead_indices(&self) -> &HashSet<usize> {
+        &self.0
+    }
+}
 #[derive(Debug, Clone)]
 pub enum AddBeadStatus {
     DagAlreadyContainsBead,
