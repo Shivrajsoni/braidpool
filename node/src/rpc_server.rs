@@ -1,12 +1,9 @@
 use crate::bead::Bead;
-use crate::braid;
-use crate::braid::AddBeadStatus;
-use crate::braid::Braid;
+use crate::braid::{self, AddBeadStatus, Braid};
+use crate::database::{Database, Miner};
 use crate::error::BraidRPCError;
-use crate::utils::create_test_bead;
-use crate::utils::BeadHash;
+use crate::utils::{create_test_bead, BeadHash};
 use clap::Subcommand;
-use futures::future::join_all;
 use jsonrpsee::core::async_trait;
 use jsonrpsee::core::client::ClientT;
 use jsonrpsee::core::middleware::Batch;
@@ -146,17 +143,32 @@ pub trait Rpc {
 
     #[method(name = "getcohortcount")]
     async fn get_cohort_count(&self) -> Result<String, ErrorObjectOwned>;
+
+    // Miner management endpoints
+    #[method(name = "addminer")]
+    async fn add_miner(&self, miner_data: String) -> Result<String, ErrorObjectOwned>;
+
+    #[method(name = "getminers")]
+    async fn get_miners(&self) -> Result<String, ErrorObjectOwned>;
+
+    #[method(name = "getminer")]
+    async fn get_miner(&self, miner_id: String) -> Result<String, ErrorObjectOwned>;
+
+    #[method(name = "deleteminer")]
+    async fn delete_miner(&self, miner_id: String) -> Result<String, ErrorObjectOwned>;
 }
 
 // RPC Server implementation using channels
 pub struct RpcServerImpl {
     braid_arc: Arc<RwLock<Braid>>,
+    database: Database,
 }
 
 impl RpcServerImpl {
-    pub fn new(braid_shared_pointer: Arc<RwLock<Braid>>) -> Self {
+    pub fn new(braid_shared_pointer: Arc<RwLock<Braid>>, database: Database) -> Self {
         Self {
             braid_arc: braid_shared_pointer,
+            database,
         }
     }
 }
@@ -233,6 +245,77 @@ impl RpcServer for RpcServerImpl {
 
         Ok(count.to_string())
     }
+
+    async fn add_miner(&self, miner_data: String) -> Result<String, ErrorObjectOwned> {
+        let miner: Miner = serde_json::from_str(&miner_data).map_err(|e| {
+            ErrorObjectOwned::owned(1, format!("Invalid miner data: {}", e), None::<()>)
+        })?;
+
+        log::info!("Add miner request received from client");
+
+        match self.database.insert_or_update_miner(&miner) {
+            Ok(()) => Ok("Miner added/updated successfully".to_string()),
+            Err(e) => Err(ErrorObjectOwned::owned(
+                5,
+                format!("Database error: {}", e),
+                None::<()>,
+            )),
+        }
+    }
+
+    async fn get_miners(&self) -> Result<String, ErrorObjectOwned> {
+        log::info!("Get miners request received from client");
+
+        match self.database.get_all_miners() {
+            Ok(miners) => serde_json::to_string(&miners)
+                .map_err(|_| ErrorObjectOwned::owned(2, "Internal error", None::<()>)),
+            Err(e) => Err(ErrorObjectOwned::owned(
+                5,
+                format!("Database error: {}", e),
+                None::<()>,
+            )),
+        }
+    }
+
+    async fn get_miner(&self, miner_id: String) -> Result<String, ErrorObjectOwned> {
+        log::info!(
+            "Get miner request received from client for ID: {}",
+            miner_id
+        );
+
+        match self.database.get_miner_by_id(&miner_id) {
+            Ok(Some(miner)) => serde_json::to_string(&miner)
+                .map_err(|_| ErrorObjectOwned::owned(2, "Internal error", None::<()>)),
+            Ok(None) => Err(ErrorObjectOwned::owned(6, "Miner not found", None::<()>)),
+            Err(e) => Err(ErrorObjectOwned::owned(
+                5,
+                format!("Database error: {}", e),
+                None::<()>,
+            )),
+        }
+    }
+
+    async fn delete_miner(&self, miner_id: String) -> Result<String, ErrorObjectOwned> {
+        log::info!(
+            "Delete miner request received from client for ID: {}",
+            miner_id
+        );
+
+        match self.database.delete_miner(&miner_id) {
+            Ok(rows_affected) => {
+                if rows_affected > 0 {
+                    Ok("Miner deleted successfully".to_string())
+                } else {
+                    Err(ErrorObjectOwned::owned(6, "Miner not found", None::<()>))
+                }
+            }
+            Err(e) => Err(ErrorObjectOwned::owned(
+                5,
+                format!("Database error: {}", e),
+                None::<()>,
+            )),
+        }
+    }
 }
 struct LoggingMiddleware<S>(S);
 
@@ -270,6 +353,12 @@ where
 //server building
 //running a server in seperate spawn event
 pub async fn run_rpc_server(braid_shared_pointer: Arc<RwLock<Braid>>) -> Result<SocketAddr, ()> {
+    // Initialize database
+    let database = Database::new("database.db3").map_err(|e| {
+        log::error!("Failed to initialize database: {}", e);
+        ()
+    })?;
+
     //Initializing the middleware
     let rpc_middleware =
         jsonrpsee::server::middleware::rpc::RpcServiceBuilder::new().layer_fn(LoggingMiddleware);
@@ -282,7 +371,7 @@ pub async fn run_rpc_server(braid_shared_pointer: Arc<RwLock<Braid>>) -> Result<
     //listening address for incoming requests/connection
     let addr = server.local_addr().unwrap();
     //context for the served server
-    let rpc_impl = RpcServerImpl::new(braid_shared_pointer);
+    let rpc_impl = RpcServerImpl::new(braid_shared_pointer, database);
     let handle = server.start(rpc_impl.into_rpc());
     log::info!(
         "RPC Server is listening at socket address http://{:?}",
@@ -335,6 +424,9 @@ pub async fn test_same_bead_extend() {
 
     let braid: Arc<RwLock<braid::Braid>> = Arc::new(RwLock::new(braid::Braid::new(genesis_beads)));
 
+    // Initialize test database
+    let database = Database::new(":memory:").unwrap();
+
     //Initializing the test server
     let rpc_middleware =
         jsonrpsee::server::middleware::rpc::RpcServiceBuilder::new().layer_fn(LoggingMiddleware);
@@ -343,7 +435,7 @@ pub async fn test_same_bead_extend() {
         .build("127.0.0.1:8889")
         .await
         .unwrap();
-    let rpc_impl = RpcServerImpl::new(braid);
+    let rpc_impl = RpcServerImpl::new(braid, database);
     let handle = server.start(rpc_impl.into_rpc());
 
     let server_addr = "127.0.0.1:8889";
@@ -379,6 +471,10 @@ pub async fn test_cohort_count_rpc() {
     let genesis_beads = vec![test_bead_1.clone()];
 
     let braid: Arc<RwLock<braid::Braid>> = Arc::new(RwLock::new(braid::Braid::new(genesis_beads)));
+
+    // Initialize test database
+    let database = Database::new(":memory:").unwrap();
+
     //Initializing the test server
     let rpc_middleware =
         jsonrpsee::server::middleware::rpc::RpcServiceBuilder::new().layer_fn(LoggingMiddleware);
@@ -387,7 +483,7 @@ pub async fn test_cohort_count_rpc() {
         .build("127.0.0.1:9000")
         .await
         .unwrap();
-    let rpc_impl = RpcServerImpl::new(braid);
+    let rpc_impl = RpcServerImpl::new(braid, database);
     let handle = server.start(rpc_impl.into_rpc());
 
     let server_addr = "127.0.0.1:9000";

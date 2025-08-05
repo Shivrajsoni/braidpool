@@ -6,6 +6,7 @@ pub mod cli;
 pub mod committed_metadata;
 pub mod common_capnp;
 pub mod config;
+pub mod database;
 pub mod echo_capnp;
 pub mod error;
 pub mod init_capnp;
