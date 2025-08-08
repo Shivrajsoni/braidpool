@@ -1,312 +1,306 @@
-import { useState } from 'react';
-import colors from '../../theme/colors';
-import Card from '../common/Card';
-import {
-  MdSpeed,
-  MdBolt,
-  MdDeviceThermostat,
-  MdWifi,
-  MdError,
-  MdCheckCircle,
-  MdLightbulb,
-} from 'react-icons/md';
+import { useState, useEffect } from 'react';
+import { Miner, MinerStatus } from './Types';
 
-// Mock data for mining devices
-const mockMiners = [
-  {
-    id: 'miner-001',
-    name: 'Antminer S19',
-    status: 'online',
-    temp: 65,
-    hashrate: '95.2',
-    efficiency: '34.5',
-    powerDraw: '3250',
-    uptime: '99.7%',
-    location: 'Rack A, Unit 3',
-    lastSeen: '2 mins ago',
-    alerts: 0,
-  },
-  {
-    id: 'miner-002',
-    name: 'Antminer S19',
-    status: 'online',
-    temp: 68,
-    hashrate: '94.8',
-    efficiency: '33.9',
-    powerDraw: '3270',
-    uptime: '99.5%',
-    location: 'Rack A, Unit 4',
-    lastSeen: '1 min ago',
-    alerts: 0,
-  },
-  {
-    id: 'miner-003',
-    name: 'Whatsminer M30S',
-    status: 'warning',
-    temp: 74,
-    hashrate: '82.5',
-    efficiency: '38.2',
-    powerDraw: '3420',
-    uptime: '97.2%',
-    location: 'Rack B, Unit 1',
-    lastSeen: '5 mins ago',
-    alerts: 1,
-  },
-  {
-    id: 'miner-004',
-    name: 'Antminer S19',
-    status: 'offline',
-    temp: 0,
-    hashrate: '0',
-    efficiency: '0',
-    powerDraw: '0',
-    uptime: '85.3%',
-    location: 'Rack B, Unit 2',
-    lastSeen: '2 hrs ago',
-    alerts: 2,
-  },
-  {
-    id: 'miner-005',
-    name: 'Whatsminer M30S',
-    status: 'online',
-    temp: 66,
-    hashrate: '93.1',
-    efficiency: '34.7',
-    powerDraw: '3290',
-    uptime: '99.8%',
-    location: 'Rack B, Unit 3',
-    lastSeen: '3 mins ago',
-    alerts: 0,
-  },
-  {
-    id: 'miner-006',
-    name: 'Antminer S19 Pro',
-    status: 'online',
-    temp: 63,
-    hashrate: '109.5',
-    efficiency: '32.1',
-    powerDraw: '3180',
-    uptime: '99.9%',
-    location: 'Rack C, Unit 1',
-    lastSeen: '1 min ago',
-    alerts: 0,
-  },
-  {
-    id: 'miner-007',
-    name: 'Antminer S19 Pro',
-    status: 'online',
-    temp: 64,
-    hashrate: '108.7',
-    efficiency: '32.4',
-    powerDraw: '3200',
-    uptime: '99.8%',
-    location: 'Rack C, Unit 2',
-    lastSeen: '2 mins ago',
-    alerts: 0,
-  },
-  {
-    id: 'miner-008',
-    name: 'Antminer S19',
-    status: 'warning',
-    temp: 72,
-    hashrate: '91.4',
-    efficiency: '35.8',
-    powerDraw: '3320',
-    uptime: '98.5%',
-    location: 'Rack C, Unit 3',
-    lastSeen: '7 mins ago',
-    alerts: 1,
-  },
-];
 
 const DeviceCard = ({
   miner,
   onActivateLight,
+  onDelete
 }: {
-  miner: any;
+  miner: Miner;
   onActivateLight: (id: string) => void;
+  onDelete: (id: string) => void;
 }) => {
-  const getStatusColor = (status: string) => {
+  const getStatusColor = (status: MinerStatus) => {
     switch (status) {
       case 'online':
-        return colors.success;
+        return 'bg-green-500';
       case 'warning':
-        return colors.warning;
+        return 'bg-yellow-400';
       case 'offline':
-        return colors.error;
+        return 'bg-red-500';
       default:
-        return colors.textSecondary;
+        return 'bg-gray-500';
     }
   };
 
   const statusColor = getStatusColor(miner.status);
 
   return (
-    <div
-      className="p-4 rounded-lg relative transition-all duration-200 hover:-translate-y-1 hover:shadow-lg border"
-      style={{
-        backgroundColor: colors.paper,
-        borderColor: `${colors.primary}20`,
-        boxShadow:
-          '0 8px 16px -8px ' +
-          (miner.status === 'online' ? colors.shadow : 'transparent'),
-      }}
-    >
-      {/* Status indicator */}
+    <div className="relative w-full max-w-[360px]  border border-gray-700 rounded-xl p-5 backdrop-blur-sm transition-transform duration-200 hover:-translate-y-1 hover:shadow-xl">
       <div
-        className="absolute top-3 right-3 w-3 h-3 rounded-full"
-        style={{ backgroundColor: statusColor }}
+        className={`absolute top-3 right-3 w-3 h-3 rounded-full ${statusColor}`}
       />
-
-      {/* Alert badge */}
       {miner.alerts > 0 && (
-        <div
-          className="absolute top-2 right-12 flex items-center gap-1 px-2 py-0.5 rounded-full text-xs"
-          style={{ backgroundColor: colors.error + '20', color: colors.error }}
-        >
-          <MdError size={16} className="text-sm" />
-          {miner.alerts}
+        <div className="absolute top-2 right-10 px-2 py-0.5 text-xs rounded-full bg-red-100 dark:bg-red-900 text-red-700 dark:text-red-300">
+          ⚠ {miner.alerts}
         </div>
       )}
-      <br />
 
-      {/* Device name */}
-      <h3
-        className="text-lg font-medium mb-2"
-        style={{ color: colors.textPrimary }}
-      >
-        {miner.name}
-      </h3>
-
-      <div className="mb-4">
-        <p className="text-xs" style={{ color: colors.textSecondary }}>
-          {miner.location}
-        </p>
-        <p className="text-xs" style={{ color: colors.textSecondary }}>
-          Last seen: {miner.lastSeen}
-        </p>
+      <h3 className="text-lg font-semibold text-white mb-1">{miner.name}</h3>
+      <div className="flex justify-between text-xs text-gray-400 mb-3">
+        <span>Location: {miner.location}</span>
+        <span>Last Seen: {miner.lastSeen}</span>
       </div>
 
-      {/* Metrics */}
-      <div className="grid grid-cols-2 gap-2 mb-4">
-        <div className="flex items-center gap-1">
-          <MdSpeed className="text-sm" style={{ color: colors.primary }} />
-          <span className="text-sm">
-            {miner.status !== 'offline' ? `${miner.hashrate} TH/s` : '—'}
-          </span>
+      <div className="text-sm text-gray-300 space-y-2 mb-4">
+        <div className="flex justify-between">
+          <span>Hashrate: {Number(miner.hashrate).toFixed(2)} GH/s</span>
+          <span>Best Difficulty {miner.bestDiff}</span>
         </div>
-        <div className="flex items-center gap-1">
-          <MdDeviceThermostat
-            className="text-sm"
-            style={{ color: colors.primary }}
-          />
-          <span className="text-sm">
-            {miner.status !== 'offline' ? `${miner.temp}°C` : '—'}
-          </span>
+        <div className="flex justify-between">
+          <span>ASICModel: {miner.ASICModel}</span>
+          <span>Uptime: {miner.uptime}</span>
         </div>
-        <div className="flex items-center gap-1">
-          <MdBolt className="text-sm" style={{ color: colors.primary }} />
-          <span className="text-sm">
-            {miner.status !== 'offline' ? `${miner.powerDraw}W` : '—'}
-          </span>
+        <div className="flex justify-between">
+          <span>Power: {Number(miner.powerDraw).toFixed(2)} W</span>
+          <span>MaxPower: {miner.maxPower} W</span>
         </div>
-        <div className="flex items-center gap-1">
-          <MdWifi className="text-sm" style={{ color: colors.primary }} />
-          <span className="text-sm">{miner.uptime}</span>
+        <div className="flex justify-between">
+          <span>Efficiency: {Number(miner.efficiency).toFixed(2)}</span>
+          <span>Frequency: {miner.frequency}MHz</span>
         </div>
-      </div>
-
-      {/* Actions */}
-      <div className="flex justify-between">
-        <button
-          className="text-xs px-3 py-1 rounded border hover:bg-opacity-20 transition-colors"
-          style={{
-            borderColor: colors.primary,
-            color: colors.primary,
-            backgroundColor: 'transparent',
-          }}
-          onClick={() => console.log(`📊 Details for ${miner.id}`)}
-        >
-          Details
-        </button>
-        <button
-          className="text-xs px-3 py-1 rounded border hover:bg-opacity-20 transition-colors flex items-center gap-1"
-          style={{
-            borderColor: colors.primary,
-            color: colors.primary,
-            backgroundColor: 'transparent',
-          }}
-          onClick={() => onActivateLight(miner.id)}
-        >
-          <MdLightbulb size={16} className="text-sm" />
-          Locate
-        </button>
+        <div className="flex justify-between">
+          <span>FanSpeed: {miner.fanspeed}</span>
+          <span>Temp: {miner.temp}°C</span>
+        </div>
       </div>
     </div>
   );
 };
 
-const MineInventoryDashboard = () => {
+const MinerInventoryDashboard = () => {
+  const [miners, setMiners] = useState<Miner[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
   const [activeLight, setActiveLight] = useState<string | null>(null);
-  const handleActivateLight = (id: string) => {
-    /*...*/
+  const [newMinerIP, setNewMinerIP] = useState('');
+  const [syncing, setSyncing] = useState(false);
+
+  const API_BASE_URL = 'http://localhost:5000';
+
+  // Fetch all miners from RPC storage
+  const fetchMiners = async () => {
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/miners`, {
+        headers: { Accept: 'application/json' },
+      });
+
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+      }
+
+      const data = await response.json();
+      setMiners(Array.isArray(data) ? data : []);
+      setError(null);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Unknown error occurred');
+      console.error('Error fetching miners:', err);
+    } finally {
+      setLoading(false);
+    }
   };
 
-  // Stats
-  const totalMiners = mockMiners.length;
-  const onlineMiners = mockMiners.filter((m) => m.status === 'online').length;
-  const warningMiners = mockMiners.filter((m) => m.status === 'warning').length;
-  const offlineMiners = mockMiners.filter((m) => m.status === 'offline').length;
+  useEffect(() => {
+    fetchMiners();
+    // Fetch every 30 seconds
+    const interval = setInterval(fetchMiners, 30000);
+    return () => clearInterval(interval);
+  }, []);
+
+  const handleActivateLight = (id: string) => {
+    setActiveLight(id);
+    console.log(`Activating locate light for miner ${id}`);
+    setTimeout(() => setActiveLight(null), 5000);
+  };
+
+  const addMinerByIP = async () => {
+    if (!newMinerIP.trim()) {
+      alert('Please enter a valid IP address');
+      return;
+    }
+
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/miners`, {
+        method: 'POST',
+        headers: { 
+          'Content-Type': 'application/json',
+          'Accept': 'application/json' 
+        },
+        body: JSON.stringify({ ip: newMinerIP.trim() })
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.error || `HTTP ${response.status}`);
+      }
+
+      const newMiner = await response.json();
+      console.log('Miner added successfully:', newMiner);
+      
+      // Refresh the miners list
+      await fetchMiners();
+      setNewMinerIP('');
+      
+    } catch (err) {
+      const errorMsg = err instanceof Error ? err.message : 'Unknown error';
+      alert(`Failed to add miner: ${errorMsg}`);
+      console.error('Add miner error:', err);
+    }
+  };
+
+  const deleteMiner = async (id: string) => {
+    if (!confirm('Are you sure you want to remove this miner?')) {
+      return;
+    }
+
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/miners/${encodeURIComponent(id)}`, {
+        method: 'DELETE',
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.error || `HTTP ${response.status}`);
+      }
+
+      // Refresh the miners list
+      await fetchMiners();
+      console.log(`Miner ${id} deleted successfully`);
+      
+    } catch (err) {
+      const errorMsg = err instanceof Error ? err.message : 'Unknown error';
+      alert(`Failed to delete miner: ${errorMsg}`);
+      console.error('Delete miner error:', err);
+    }
+  };
+
+  const syncAllMiners = async () => {
+    setSyncing(true);
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/miners/sync`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.error || `HTTP ${response.status}`);
+      }
+
+      const result = await response.json();
+      console.log('Sync completed:', result);
+      
+      // Refresh the miners list
+      await fetchMiners();
+      
+    } catch (err) {
+      const errorMsg = err instanceof Error ? err.message : 'Unknown error';
+      alert(`Sync failed: ${errorMsg}`);
+      console.error('Sync error:', err);
+    } finally {
+      setSyncing(false);
+    }
+  };
+
+ 
+
+  const totalMiners = miners.length;
+  const onlineMiners = miners.filter((m) => m.status === 'online').length;
+  const warningMiners = miners.filter((m) => m.status === 'warning').length;
+  const offlineMiners = miners.filter((m) => m.status === 'offline').length;
+
+  if (loading) {
+    return (
+      <div className="flex justify-center items-center py-8 gap-3">
+        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-500"></div>
+        <h2 className="text-white">Loading miner data from storage...</h2>
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="bg-red-900 border border-red-700 text-red-100 px-4 py-3 rounded relative" role="alert">
+        <strong className="font-bold">Error: </strong>
+        <span className="block sm:inline">{error}</span>
+        <button 
+          onClick={fetchMiners} 
+          className="mt-2 px-3 py-1 bg-red-700 hover:bg-red-600 rounded text-sm"
+        >
+          Retry
+        </button>
+      </div>
+    );
+  }
 
   return (
-    <Card
-      title="Mine Inventory"
-      subtitle="Status of all mining devices"
-      accentColor={colors.cardAccentSuccess}
-    >
-      {/* Summary stats */}
-      <div className="flex flex-wrap gap-2 mb-6">
-        <div
-          className="flex items-center gap-1 px-3 py-1 rounded-full border text-sm"
-          style={{ borderColor: colors.success, color: colors.success }}
-        >
-          <MdCheckCircle size={16} className="text-sm" />
-          {onlineMiners} Online
+    <>
+      <div className="text-center mb-8">
+        <p className="text-base text-gray-400 mt-1">
+          Status of all mining devices (stored in RPC database)
+        </p>
+
+        <div className="flex justify-center items-center gap-2 mt-4 flex-wrap">
+          <input
+            type="text"
+            value={newMinerIP}
+            onChange={(e) => setNewMinerIP(e.target.value)}
+            placeholder="Enter miner IP (e.g. 192.168.1.100)"
+            className="px-3 py-1 text-sm bg-gray-800 border border-gray-600 rounded text-white placeholder-gray-400 w-64"
+            onKeyPress={(e) => e.key === 'Enter' && addMinerByIP()}
+          />
+          <button
+            onClick={addMinerByIP}
+            className="px-3 py-1 text-sm bg-gray-800 hover:bg-blue-700 text-white rounded"
+          >
+            Add Miner
+          </button>
+          <button
+            onClick={syncAllMiners}
+            disabled={syncing}
+            className="px-3 py-1 text-sm bg-gray-800  hover:bg-green-700 disabled:bg-green-800 text-white rounded"
+          >
+            {syncing ? 'Syncing...' : 'Sync All'}
+          </button>
+          
         </div>
-        <div
-          className="flex items-center gap-1 px-3 py-1 rounded-full border text-sm"
-          style={{ borderColor: colors.warning, color: colors.warning }}
-        >
-          <MdError size={16} className="text-sm" />
-          {warningMiners} Warning
-        </div>
-        <div
-          className="flex items-center gap-1 px-3 py-1 rounded-full border text-sm"
-          style={{ borderColor: colors.error, color: colors.error }}
-        >
-          <MdError size={16} className="text-sm" />
-          {offlineMiners} Offline
-        </div>
-        <div
-          className="flex items-center gap-1 px-3 py-1 rounded-full border text-sm"
-          style={{ borderColor: colors.primary, color: colors.primary }}
-        >
-          {totalMiners} Total Devices
+
+        <div className="flex flex-wrap justify-center gap-3 mt-6 text-sm">
+          <div className="px-4 py-1 rounded-md border border-gray-600 text-green-400">
+            {onlineMiners} Online
+          </div>
+          <div className="px-4 py-1 rounded-md border border-gray-600 text-yellow-400">
+            {warningMiners} Warning
+          </div>
+          <div className="px-4 py-1 rounded-md border border-gray-600 text-red-400">
+            {offlineMiners} Offline
+          </div>
+          <div className="px-4 py-1 rounded-md border border-gray-600 text-blue-400">
+            {totalMiners} Total
+          </div>
         </div>
       </div>
 
-      {/* Graphics layout */}
-      <div className="grid lg:grid-cols-4 gap-4">
-        {mockMiners.map((miner) => (
-          <DeviceCard
-            key={miner.id}
-            miner={miner}
-            onActivateLight={handleActivateLight}
-          />
-        ))}
-      </div>
-    </Card>
+      {miners.length === 0 ? (
+        <div className="text-center py-8 text-gray-500">
+          <p>No mining devices found in storage.</p>
+          <p className="text-sm mt-2">Add miners by IP address or check your braidpool RPC server.</p>
+        </div>
+      ) : (
+        <div className="flex overflow-x-auto space-x-4 pb-4 ml-6">
+          {miners.map((miner) => (
+            <DeviceCard
+              key={miner.id}
+              miner={miner}
+              onActivateLight={handleActivateLight}
+              onDelete={deleteMiner}
+            />
+          ))}
+        </div>
+      )}
+    </>
   );
 };
 
-export default MineInventoryDashboard;
+export default MinerInventoryDashboard;
