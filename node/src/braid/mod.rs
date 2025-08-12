@@ -8,7 +8,7 @@ use std::collections::{HashMap, HashSet};
 #[derive(Clone, Debug, Serialize, PartialEq)]
 
 pub struct Cohort(HashSet<usize>);
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum AddBeadStatus {
     DagAlreadyContainsBead,
     InvalidBead,
@@ -33,6 +33,8 @@ pub struct Braid {
     pub orphan_beads: Vec<Bead>,
     pub genesis_beads: HashSet<usize>,
     pub bead_index_mapping: HashMap<BeadHash, usize>,
+    pub parents_mapping: HashMap<usize, HashSet<usize>>,
+    pub children_mapping: HashMap<usize, HashSet<usize>>,
 }
 
 impl Braid {
@@ -41,11 +43,15 @@ impl Braid {
         let mut beads = Vec::new();
         let mut bead_indices = HashSet::new();
         let mut bead_index_mapping = HashMap::new();
+        let mut parents_mapping: HashMap<usize, HashSet<usize>> = HashMap::new();
+        let mut children_mapping: HashMap<usize, HashSet<usize>> = HashMap::new();
 
         for (index, bead) in genesis_beads.into_iter().enumerate() {
             beads.push(bead.clone());
             bead_indices.insert(index);
             bead_index_mapping.insert(bead.block_header.block_hash(), index);
+            parents_mapping.insert(index, HashSet::new());
+            children_mapping.insert(index, HashSet::new());
         }
         let mut genesis_cohort: Vec<Cohort> = Vec::new();
         if bead_indices.len() != 0 {
@@ -59,6 +65,8 @@ impl Braid {
             orphan_beads: Vec::new(),
             genesis_beads: bead_indices,
             bead_index_mapping,
+            parents_mapping,
+            children_mapping,
         }
     }
 }
@@ -106,6 +114,20 @@ impl Braid {
         self.beads.push(bead.clone());
         let new_bead_index = self.beads.len() - 1;
         self.bead_index_mapping.insert(bead_hash, new_bead_index);
+
+        // Update parents_mapping and children_mapping
+        let mut parent_indices = HashSet::new();
+        for parent_hash in &bead.committed_metadata.parents {
+            if let Some(&parent_index) = self.bead_index_mapping.get(parent_hash) {
+                parent_indices.insert(parent_index);
+                self.children_mapping
+                    .entry(parent_index)
+                    .or_insert_with(HashSet::new)
+                    .insert(new_bead_index);
+            }
+        }
+        self.parents_mapping.insert(new_bead_index, parent_indices);
+        self.children_mapping.insert(new_bead_index, HashSet::new());
 
         // Find earliest parent of bead in cohorts and nuke all cohorts after that
         let mut found_parent_indices = HashSet::new();

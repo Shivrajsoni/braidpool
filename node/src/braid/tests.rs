@@ -188,6 +188,28 @@ fn loading_braid_from_file(file_path: &str) -> (Braid, FileBraid) {
         }
         current_bead_cohorots.push(Cohort(current_cohort_indices));
     }
+
+    let mut parents_mapping: HashMap<usize, HashSet<usize>> = HashMap::new();
+    let mut children_mapping: HashMap<usize, HashSet<usize>> = HashMap::new();
+
+    for bead_idx in 0..beads_vector.len() {
+        parents_mapping.insert(bead_idx, HashSet::new());
+        children_mapping.insert(bead_idx, HashSet::new());
+    }
+
+    for (child_idx, parent_list) in &file_braid.parents {
+        for parent_idx in parent_list {
+            parents_mapping
+                .get_mut(child_idx)
+                .unwrap()
+                .insert(*parent_idx);
+            children_mapping
+                .get_mut(parent_idx)
+                .unwrap()
+                .insert(*child_idx);
+        }
+    }
+
     //constructing actual braid object from file-braid object
     (
         Braid {
@@ -198,6 +220,8 @@ fn loading_braid_from_file(file_path: &str) -> (Braid, FileBraid) {
             cohorts: current_bead_cohorots,
             cohort_tips: vec![HashSet::new()], // Cohorts tips are only used in extend(), so we can skip them here.
             orphan_beads: Vec::new(),
+            parents_mapping,
+            children_mapping,
         },
         file_braid.clone(),
     )
@@ -218,6 +242,8 @@ pub fn test_extend_functionality() {
             test_bead_0.block_header.block_hash(),
             0,
         )]),
+        parents_mapping: std::collections::HashMap::from([(0, HashSet::new())]),
+        children_mapping: std::collections::HashMap::from([(0, HashSet::new())]),
     };
     assert_eq!(
         test_braid.cohorts,
@@ -417,7 +443,7 @@ pub fn test_extend_functionality() {
 }
 
 #[test]
-pub fn test_orphan_beads_functinality() {
+pub fn test_orphan_beads_functionality() {
     let test_bead_0 = emit_bead();
 
     let mut test_braid = Braid {
@@ -431,6 +457,8 @@ pub fn test_orphan_beads_functinality() {
             test_bead_0.block_header.block_hash(),
             0,
         )]),
+        parents_mapping: std::collections::HashMap::from([(0, HashSet::new())]),
+        children_mapping: std::collections::HashMap::from([(0, HashSet::new())]),
     };
     assert_eq!(
         test_braid.cohorts,
@@ -512,6 +540,8 @@ pub fn test_genesis1() {
             (test_bead_2.block_header.block_hash(), 2),
             (test_bead_3.block_header.block_hash(), 3),
         ]),
+        parents_mapping: std::collections::HashMap::new(),
+        children_mapping: std::collections::HashMap::new(),
     };
 
     //mapping of the indices with set of indices representing its parents
@@ -562,6 +592,8 @@ pub fn test_genesis2() {
             (test_bead_2.block_header.block_hash(), 2),
             (test_bead_3.block_header.block_hash(), 3),
         ]),
+        parents_mapping: std::collections::HashMap::new(),
+        children_mapping: std::collections::HashMap::new(),
     };
     //mapping of the indices with set of indices representing its parents
     //where the key represents the ith indexed bead from self.beads which contains all the beads
@@ -615,6 +647,8 @@ pub fn test_genesis3() {
             (test_bead_3.block_header.block_hash(), 3),
             (test_bead_4.block_header.block_hash(), 4),
         ]),
+        parents_mapping: std::collections::HashMap::new(),
+        children_mapping: std::collections::HashMap::new(),
     };
     //mapping of the indices with set of indices representing its parents
     //where the key represents the ith indexed bead from self.beads which contains all the beads
@@ -702,6 +736,8 @@ pub fn test_tips1() {
             (test_bead_2.block_header.block_hash(), 2),
             (test_bead_3.block_header.block_hash(), 3),
         ]),
+        parents_mapping: std::collections::HashMap::new(),
+        children_mapping: std::collections::HashMap::new(),
     };
 
     //mapping of the indices with set of indices representing its parents
@@ -758,6 +794,8 @@ pub fn test_tips2() {
             (test_bead_2.block_header.block_hash(), 2),
             (test_bead_3.block_header.block_hash(), 3),
         ]),
+        parents_mapping: std::collections::HashMap::new(),
+        children_mapping: std::collections::HashMap::new(),
     };
 
     //mapping of the indices with set of indices representing its parents
@@ -844,6 +882,8 @@ pub fn test_tips3() {
             (test_bead_4.block_header.block_hash(), 4),
             (test_bead_5.block_header.block_hash(), 5),
         ]),
+        parents_mapping: std::collections::HashMap::new(),
+        children_mapping: std::collections::HashMap::new(),
     };
     //mapping of the indices with set of indices representing its parents
     //where the key represents the ith indexed bead from self.beads which contains all the beads
@@ -932,6 +972,8 @@ pub fn test_reverse() {
             (test_bead_4.block_header.block_hash(), 4),
             (test_bead_5.block_header.block_hash(), 5),
         ]),
+        parents_mapping: std::collections::HashMap::new(),
+        children_mapping: std::collections::HashMap::new(),
     };
     //mapping of the indices with set of indices representing its parents
     //where the key represents the ith indexed bead from self.beads which contains all the beads
@@ -1040,6 +1082,8 @@ pub fn test_cohorts_parents_1() {
             (test_bead_2.block_header.block_hash(), 2),
             (test_bead_3.block_header.block_hash(), 3),
         ]),
+        parents_mapping: std::collections::HashMap::new(),
+        children_mapping: std::collections::HashMap::new(),
     };
 
     //mapping of the indices with set of indices representing its parents
@@ -1175,6 +1219,8 @@ pub fn test_highest_work_path_1() {
             (test_bead_2.block_header.block_hash(), 2),
             (test_bead_3.block_header.block_hash(), 3),
         ]),
+        parents_mapping: std::collections::HashMap::new(),
+        children_mapping: std::collections::HashMap::new(),
     };
 
     //mapping of the indices with set of indices representing its parents
@@ -1243,6 +1289,8 @@ pub fn test_diamond_path_highest_work() {
             (test_bead_3.block_header.block_hash(), 3),
             (test_bead_4.block_header.block_hash(), 4),
         ]),
+        parents_mapping: std::collections::HashMap::new(),
+        children_mapping: std::collections::HashMap::new(),
     };
     //mapping of the indices with set of indices representing its parents
     //where the key represents the ith indexed bead from self.beads which contains all the beads
@@ -1525,12 +1573,12 @@ fn test_extend_function() {
         let (_, file_braid) = loading_braid_from_file(file_path.to_str().unwrap());
 
         let mut current_braid_parents: HashMap<usize, HashSet<usize>> = HashMap::new();
-        for beads in file_braid.parents {
+        for beads in &file_braid.parents {
             let mut current_bead_parents: HashSet<usize> = HashSet::new();
             for parent_beads in beads.1 {
-                current_bead_parents.insert(parent_beads);
+                current_bead_parents.insert(*parent_beads);
             }
-            current_braid_parents.insert(beads.0, current_bead_parents);
+            current_braid_parents.insert(*beads.0, current_bead_parents);
         }
 
         let mut index_to_bead: HashMap<usize, Bead> = HashMap::new();
@@ -1575,12 +1623,16 @@ fn test_extend_function() {
         let mut genesis_beads = Vec::new();
         let mut genesis_set = HashSet::new();
         let mut bead_index_mapping = HashMap::new();
+        let mut parents_mapping: HashMap<usize, HashSet<usize>> = HashMap::new();
+        let mut children_mapping: HashMap<usize, HashSet<usize>> = HashMap::new();
 
         for &idx in &genesis_indices {
             if let Some(bead) = index_to_bead.get(&idx) {
                 genesis_beads.push(bead.clone());
                 genesis_set.insert(idx);
                 bead_index_mapping.insert(bead.block_header.block_hash(), idx);
+                parents_mapping.insert(idx, HashSet::new());
+                children_mapping.insert(idx, HashSet::new());
             }
         }
 
@@ -1592,6 +1644,8 @@ fn test_extend_function() {
             orphan_beads: Vec::new(),
             genesis_beads: genesis_set,
             bead_index_mapping,
+            parents_mapping,
+            children_mapping,
         };
 
         // Extend braid with remaining beads in order of index
@@ -1627,5 +1681,70 @@ fn test_extend_function() {
         }
 
         assert_eq!(computed_cohorts_by_hash, file_cohorts_by_hash);
+
+        let mut computed_parents_by_hash: HashMap<bitcoin::BlockHash, HashSet<bitcoin::BlockHash>> =
+            HashMap::new();
+        for (child_idx, parent_indices) in &test_braid.parents_mapping {
+            let child_hash = test_braid.beads[*child_idx].block_header.block_hash();
+            for parent_idx in parent_indices {
+                let parent_hash = test_braid.beads[*parent_idx].block_header.block_hash();
+                computed_parents_by_hash
+                    .entry(child_hash)
+                    .or_insert_with(HashSet::new)
+                    .insert(parent_hash);
+            }
+        }
+
+        let mut computed_children_by_hash: HashMap<
+            bitcoin::BlockHash,
+            HashSet<bitcoin::BlockHash>,
+        > = HashMap::new();
+        for (parent_idx, child_indices) in &test_braid.children_mapping {
+            let parent_hash = test_braid.beads[*parent_idx].block_header.block_hash();
+            for child_idx in child_indices {
+                let child_hash = test_braid.beads[*child_idx].block_header.block_hash();
+                computed_children_by_hash
+                    .entry(parent_hash)
+                    .or_insert_with(HashSet::new)
+                    .insert(child_hash);
+            }
+        }
+
+        let mut file_parents_by_hash: HashMap<bitcoin::BlockHash, HashSet<bitcoin::BlockHash>> =
+            HashMap::new();
+        for (child_idx, parent_indices) in &file_braid.parents {
+            if let Some(child_bead) = index_to_bead.get(child_idx) {
+                let child_hash = child_bead.block_header.block_hash();
+                for parent_idx in parent_indices {
+                    if let Some(parent_bead) = index_to_bead.get(parent_idx) {
+                        let parent_hash = parent_bead.block_header.block_hash();
+                        file_parents_by_hash
+                            .entry(child_hash)
+                            .or_insert_with(HashSet::new)
+                            .insert(parent_hash);
+                    }
+                }
+            }
+        }
+
+        let mut file_children_by_hash: HashMap<bitcoin::BlockHash, HashSet<bitcoin::BlockHash>> =
+            HashMap::new();
+        for (parent_idx, child_indices) in &file_braid.children {
+            if let Some(parent_bead) = index_to_bead.get(parent_idx) {
+                let parent_hash = parent_bead.block_header.block_hash();
+                for child_idx in child_indices {
+                    if let Some(child_bead) = index_to_bead.get(child_idx) {
+                        let child_hash = child_bead.block_header.block_hash();
+                        file_children_by_hash
+                            .entry(parent_hash)
+                            .or_insert_with(HashSet::new)
+                            .insert(child_hash);
+                    }
+                }
+            }
+        }
+
+        assert_eq!(computed_parents_by_hash, file_parents_by_hash);
+        assert_eq!(computed_children_by_hash, file_children_by_hash);
     }
 }
