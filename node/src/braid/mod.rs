@@ -33,8 +33,8 @@ pub struct Braid {
     pub orphan_beads: Vec<Bead>,
     pub genesis_beads: HashSet<usize>,
     pub bead_index_mapping: HashMap<BeadHash, usize>,
-    pub parents_mapping: HashMap<usize, HashSet<usize>>,
-    pub children_mapping: HashMap<usize, HashSet<usize>>,
+    pub parents: HashMap<usize, HashSet<usize>>,
+    pub children: HashMap<usize, HashSet<usize>>,
 }
 
 impl Braid {
@@ -43,15 +43,15 @@ impl Braid {
         let mut beads = Vec::new();
         let mut bead_indices = HashSet::new();
         let mut bead_index_mapping = HashMap::new();
-        let mut parents_mapping: HashMap<usize, HashSet<usize>> = HashMap::new();
-        let mut children_mapping: HashMap<usize, HashSet<usize>> = HashMap::new();
+        let mut parents: HashMap<usize, HashSet<usize>> = HashMap::new();
+        let mut children: HashMap<usize, HashSet<usize>> = HashMap::new();
 
         for (index, bead) in genesis_beads.into_iter().enumerate() {
             beads.push(bead.clone());
             bead_indices.insert(index);
             bead_index_mapping.insert(bead.block_header.block_hash(), index);
-            parents_mapping.insert(index, HashSet::new());
-            children_mapping.insert(index, HashSet::new());
+            parents.insert(index, HashSet::new());
+            children.insert(index, HashSet::new());
         }
         let mut genesis_cohort: Vec<Cohort> = Vec::new();
         if bead_indices.len() != 0 {
@@ -65,8 +65,8 @@ impl Braid {
             orphan_beads: Vec::new(),
             genesis_beads: bead_indices,
             bead_index_mapping,
-            parents_mapping,
-            children_mapping,
+            parents,
+            children,
         }
     }
 }
@@ -115,19 +115,19 @@ impl Braid {
         let new_bead_index = self.beads.len() - 1;
         self.bead_index_mapping.insert(bead_hash, new_bead_index);
 
-        // Update parents_mapping and children_mapping
+        // Update parents and children
         let mut parent_indices = HashSet::new();
         for parent_hash in &bead.committed_metadata.parents {
             if let Some(&parent_index) = self.bead_index_mapping.get(parent_hash) {
                 parent_indices.insert(parent_index);
-                self.children_mapping
+                self.children
                     .entry(parent_index)
                     .or_insert_with(HashSet::new)
                     .insert(new_bead_index);
             }
         }
-        self.parents_mapping.insert(new_bead_index, parent_indices);
-        self.children_mapping.insert(new_bead_index, HashSet::new());
+        self.parents.insert(new_bead_index, parent_indices);
+        self.children.insert(new_bead_index, HashSet::new());
 
         // Find earliest parent of bead in cohorts and nuke all cohorts after that
         let mut found_parent_indices = HashSet::new();
@@ -371,7 +371,7 @@ mod consensus_functions {
         braid_obj: &Braid,
         parents: &HashMap<usize, HashSet<usize>>,
     ) -> HashMap<usize, HashSet<usize>> {
-        let mut bead_children_mapping: HashMap<usize, HashSet<usize>> =
+        let mut bead_children: HashMap<usize, HashSet<usize>> =
             parents.keys().map(|&idx| (idx, HashSet::new())).collect();
 
         let current_beads = &braid_obj.beads;
@@ -380,13 +380,13 @@ mod consensus_functions {
             let parents = &parents[&current_bead_idx];
 
             for parent_bead_idx in parents.iter() {
-                bead_children_mapping
+                bead_children
                     .get_mut(&parent_bead_idx)
                     .unwrap()
                     .insert(current_bead_idx);
             }
         }
-        return bead_children_mapping;
+        return bead_children;
     }
     /// Returns the complete set of **child beads** for a given set of bead indices.
     ///
@@ -417,12 +417,12 @@ mod consensus_functions {
             parents.insert(*idx, HashSet::new());
         }
         //values of children beads/mapping is always provided though
-        let bead_children_mapping = match children {
+        let bead_children = match children {
             Some(children) => children,
             None => &reverse(braid_obj, &parents),
         };
         for bead in beads_indices {
-            if let Some(child_beads) = bead_children_mapping.get(&bead) {
+            if let Some(child_beads) = bead_children.get(&bead) {
                 children_set.extend(child_beads.iter());
             }
         }
