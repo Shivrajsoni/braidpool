@@ -5,9 +5,19 @@ use serde::Serialize;
 use std::cmp::Ordering;
 use std::collections::VecDeque;
 use std::collections::{HashMap, HashSet};
-#[derive(Clone, Debug, Serialize, PartialEq)]
 
+/// Default work value per bead when specific work is not provided
+pub const FIXED_BEAD_WORK: u32 = 1;
+
+#[derive(Clone, Debug, Serialize, PartialEq)]
 pub struct Cohort(HashSet<usize>);
+impl Cohort {
+    /// Get the bead indices in this cohort
+    pub fn bead_indices(&self) -> &HashSet<usize> {
+        &self.0
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum AddBeadStatus {
     DagAlreadyContainsBead,
@@ -35,6 +45,9 @@ pub struct Braid {
     pub bead_index_mapping: HashMap<BeadHash, usize>,
     pub parents: HashMap<usize, HashSet<usize>>,
     pub children: HashMap<usize, HashSet<usize>>,
+    pub bead_work: HashMap<usize, BigUint>,
+    pub highest_work_path: Vec<usize>,
+    pub descendant_work: HashMap<usize, BigUint>,
 }
 
 impl Braid {
@@ -45,6 +58,7 @@ impl Braid {
         let mut bead_index_mapping = HashMap::new();
         let mut parents: HashMap<usize, HashSet<usize>> = HashMap::new();
         let mut children: HashMap<usize, HashSet<usize>> = HashMap::new();
+        let mut bead_work: HashMap<usize, BigUint> = HashMap::new();
 
         for (index, bead) in genesis_beads.into_iter().enumerate() {
             beads.push(bead.clone());
