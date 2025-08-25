@@ -31,7 +31,10 @@ use node::{
 use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
 use std::sync::Arc;
-use std::{collections::{HashMap,HashSet}, error::Error};
+use std::{
+    collections::{HashMap, HashSet},
+    error::Error,
+};
 use std::{fs, time::Duration};
 use tokio_util::sync::CancellationToken;
 
@@ -441,7 +444,11 @@ async fn main() -> Result<(), Box<dyn Error>> {
                                          swarm.behaviour_mut().bead_sync.send_request(
                                              &peer,
                                              BeadRequest::GetBeads(
-                                                 bead.committed_metadata.parents.clone(),
+                                                 bead.committed_metadata
+                                                     .parents
+                                                     .clone()
+                                                     .into_iter()
+                                                     .collect(),
                                              ),
                                          );
                                      } else {
@@ -661,7 +668,9 @@ async fn main() -> Result<(), Box<dyn Error>> {
                                     } else {
                                         swarm.behaviour_mut().respond_with_error(
                                             channel,
-                                            BeadSyncError::GenesisMismatch,
+                                            BeadSyncError::Other(String::from(
+                                                "provided hashes not found",
+                                            )), // TODO: make a beadsyncerror type for this type of error
                                         );
                                     }
                                 }
@@ -702,12 +711,8 @@ async fn main() -> Result<(), Box<dyn Error>> {
                                             log::info!("Genesis beads are valid");
                                         }
                                         braid::GenesisCheckStatus::MissingGenesisBead => {
-                                            let genesis_hashes =
-                                                genesis.into_iter().collect::<HashSet<_>>();
                                             log::warn!("Missing genesis beads");
-                                            swarm
-                                                .behaviour_mut()
-                                                .request_beads(peer, genesis_hashes);
+                                            swarm.behaviour_mut().request_beads(peer, genesis);
                                         }
                                         braid::GenesisCheckStatus::GenesisBeadsCountMismatch => {
                                             log::warn!("Genesis beads count mismatch");
