@@ -405,10 +405,16 @@ impl DownstreamClient {
                         .await;
                     match notification_sent_res {
                         Ok(_) => {
-                            log::info!("Notification requesting latest available template sent successfully to the notifier by a new peer {:?}",peer_addr);
+                            log::info!(
+                                "Notification requesting latest available template sent successfully to the notifier by a new peer {:?}",
+                                peer_addr
+                            );
                         }
                         Err(error) => {
-                            log::error!("An error occurred while requesting latest template by a newly authorized downstream node - {}",error);
+                            log::error!(
+                                "An error occurred while requesting latest template by a newly authorized downstream node - {}",
+                                error
+                            );
                         }
                     }
                 }
@@ -505,7 +511,7 @@ impl DownstreamClient {
                 return Err(StratumErrors::ParamNotFound {
                     param: "extranonce2".to_string(),
                     method: "mining.submit".to_string(),
-                })
+                });
             }
         };
 
@@ -515,7 +521,7 @@ impl DownstreamClient {
                 return Err(StratumErrors::ParamNotFound {
                     param: "ntime".to_string(),
                     method: "mining.submit".to_string(),
-                })
+                });
             }
         };
 
@@ -525,7 +531,7 @@ impl DownstreamClient {
                 return Err(StratumErrors::ParamNotFound {
                     param: "nonce".to_string(),
                     method: "mining.submit".to_string(),
-                })
+                });
             }
         };
         //Acquiring lock on the mining map and fetching the submitted job from the memory
@@ -553,9 +559,12 @@ impl DownstreamClient {
         // Log the coinbase transaction in hex
         log::info!("Coinbase transaction hex: {}", hex::encode(&coinbase_bytes));
 
-        let mut coinbase_cursor = Cursor::new(coinbase_bytes);
+        let mut coinbase_cursor = Cursor::new(coinbase_bytes.clone());
         let coinbase_tx: Transaction =
             bitcoin::Transaction::consensus_decode(&mut coinbase_cursor).unwrap();
+
+        // Log the coinbase transaction in hex
+        log::info!("Coinbase transaction hex: {}", hex::encode(&coinbase_bytes));
 
         //computing merkle new merkle path due to updated coinbase transaction
         let mut merkel_branches_bytes: Vec<Vec<u8>> = Vec::new();
@@ -582,7 +591,7 @@ impl DownstreamClient {
                     return Err(StratumErrors::ParamNotFound {
                         param: "rolled_version".to_string(),
                         method: "mining.submit".to_string(),
-                    })
+                    });
                 }
             };
             // Miner received version
@@ -836,7 +845,7 @@ impl DownstreamClient {
                 return Err(StratumErrors::ParamNotFound {
                     param: "feature_array".to_string(),
                     method: "mining.configure".to_string(),
-                })
+                });
             }
         };
         let feature_names: Vec<String> = match features
@@ -1203,7 +1212,11 @@ impl Notifier {
         let coinbase_2 = hex::encode(
             &deserialized_coinbase[separator_pos + (EXTRANONCE1_SIZE + EXTRANONCE2_SIZE)..],
         );
-        log::info!("Coinbase splitted with coinbase_prefix and coinbase suffix respectively as -- {:?} {:?}",coinbase_1,coinbase_2);
+        log::info!(
+            "Coinbase splitted with coinbase_prefix and coinbase suffix respectively as -- {:?} {:?}",
+            coinbase_1,
+            coinbase_2
+        );
         //Constructing merkel root via merkel path .
         let mut merkle_branches: Vec<String> = Vec::new();
         let mut txids_hashes: Vec<Txid> = vec![];
@@ -1211,7 +1224,9 @@ impl Notifier {
             txids_hashes.push(tx.compute_txid());
         }
         if merkle_coinbase_branch.len() == 0 {
-            log::info!("Empty branch hence previous template was being used and hence saving has to be done !");
+            log::info!(
+                "Empty branch hence previous template was being used and hence saving has to be done !"
+            );
         } else {
             for sibling_node in merkle_coinbase_branch.iter() {
                 let sibling_hex = hex::encode(sibling_node);
@@ -1240,7 +1255,7 @@ impl Notifier {
         let time = notified_template.curtime;
         Ok(JobNotification {
             job_id: new_job_id.to_string(),
-            prevhash: prev_block_hash_little_endian,
+            prevhash: prev_block_hash.to_string(),
             coinbase1: coinbase_1,
             coinbase2: coinbase_2,
             merkle_branches: merkle_branches,
@@ -1370,7 +1385,7 @@ impl Notifier {
                                             error: error.to_string(),
                                             msg: error.0,
                                             msg_type: "SendToAll".to_string(),
-                                        })
+                                        });
                                     }
                                 };
                         }
@@ -1473,7 +1488,7 @@ impl Notifier {
                                 error: error.to_string(),
                                 msg: error.0,
                                 msg_type: "LatestTemplateSent".to_string(),
-                            })
+                            });
                         }
                     };
                 }
