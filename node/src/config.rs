@@ -114,12 +114,13 @@ pub struct CoinbaseConfig {
 impl CoinbaseConfig {
     pub fn for_network(network: Network) -> Self {
         let pool_payout_address = match network {
-            Network::Bitcoin => "bc1qpa77defz30uavu8lxef98q95rae6m7t8au9vp7".to_string(),
-            Network::Testnet(_) => "tb1qpa77defz30uavu8lxef98q95rae6m7t8au9vp7".to_string(),
-            Network::Signet => "tb1qpa77defz30uavu8lxef98q95rae6m7t8au9vp7".to_string(),
-            Network::Regtest => "bcrt1qpa77defz30uavu8lxef98q95rae6m7t8au9vp7".to_string(),
-            Network::CPUNet => "tc1qu3cdq9unyhdc3d2hw8mvpfgnnhvp6ucckkl6ft".to_string(),
-            _ => "tb1qpa77defz30uavu8lxef98q95rae6m7t8au9vp7".to_string(),
+            Network::Bitcoin => "bc1qpfhxfywcp29qkqg9t0qvjnu85pzfawtu7yajmg".to_string(),
+            Network::Testnet(_) => "tb1q7kquh3zh3pggasrqsf8syqs7kj5ahzkmvrakjf".to_string(),
+            Network::Signet => "tb1qc5nr23c5pagwvax6cw926pwzp65ddr0c07nw9d".to_string(),
+            Network::Regtest => "bcrt1qh4u8mynzpfglrxyrzqazhpyl578288tekz0nyl".to_string(),
+            Network::CPUNet => "tc1qj2w4jwryd309zyutrr72auw239gzmauet6k4rz".to_string(),
+            //Default address binded to CPUNET
+            _ => "tc1qj2w4jwryd309zyutrr72auw239gzmauet6k4rz".to_string(),
         };
 
         Self {
