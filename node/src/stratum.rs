@@ -394,8 +394,8 @@ impl DownstreamClient {
                 //downstream connection
                 if self.authorized == true
                     && self.subscribed == true
-                    && self.channel_configured == true
-                    && self.suggest_difficulty_done == true
+                    // && self.channel_configured == true
+                    // && self.suggest_difficulty_done == true
                     && method != "mining.submit"
                 {
                     let notification_sent_res = notification_sender

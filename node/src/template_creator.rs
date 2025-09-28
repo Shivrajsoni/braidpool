@@ -308,7 +308,8 @@ fn build_coinbase_input(
 
     let script_sig = ScriptBuf::from_bytes(script_data);
     let mut witness = Witness::new();
-    witness.push(vec![0u8; 32]);
+    //Commenting this as `cpuminer` not supports segwit not cherry-picked yet
+    // witness.push(vec![0u8; 32]);
 
     Ok(TxIn {
         previous_output: OutPoint::COINBASE_PREVOUT,
