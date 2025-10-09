@@ -8,6 +8,8 @@ import { fetchReward } from './utils/fetchRewards.js';
 import { handleWebSocketConnection } from './ws/handleWebSocketConnection.js';
 import { fetchBlockDetails } from './utils/fetchBlockDetails.js';
 import { fetchAllNodeData } from './utils/fetchBlockChainInfo.js';
+import { fetchPoolInfo } from './utils/fetchPoolInfo.js';
+import { fetchMempoolStats } from './utils/fetchMempoolStats.js';
 
 dotenv.config();
 
@@ -61,6 +63,69 @@ async function sendNodeHealthData() {
     }
   });
 }
+async function sendPoolInfo() {
+  try {
+    const stats = await fetchPoolInfo();
+
+    if (stats) {
+      const mempoolData = {
+        type: 'pool_update',
+        data: stats,
+        time: new Date().toLocaleString(),
+      };
+
+      wss.clients.forEach((client) => {
+        if (client.readyState === client.OPEN) {
+          client.send(JSON.stringify(mempoolData));
+        }
+      });
+    }
+  } catch (err) {
+    console.error('[Server] fetchPoolStats failed:', err.message);
+  }
+}
+async function sendReward() {
+  try {
+    const stats = await fetchReward();
+
+    if (stats) {
+      const mempoolData = {
+        type: 'reward_update',
+        data: stats,
+        time: new Date().toLocaleString(),
+      };
+
+      wss.clients.forEach((client) => {
+        if (client.readyState === client.OPEN) {
+          client.send(JSON.stringify(mempoolData));
+        }
+      });
+    }
+  } catch (err) {
+    console.error('[Server] Rewards failed:', err.message);
+  }
+}
+async function sendMempoolData() {
+  try {
+    const stats = await fetchMempoolStats();
+
+    if (stats) {
+      const mempoolData = {
+        type: 'mempool_update',
+        data: stats,
+        time: new Date().toLocaleString(),
+      };
+
+      wss.clients.forEach((client) => {
+        if (client.readyState === client.OPEN) {
+          client.send(JSON.stringify(mempoolData));
+        }
+      });
+    }
+  } catch (err) {
+    console.error('[Server] fetchMempoolStats failed:', err.message);
+  }
+}
 
 setInterval(() => {
   sendDataToClients().catch((err) =>
@@ -79,12 +144,12 @@ setInterval(() => {
     console.error('[Server] fetchLatencyData failed:', err)
   );
 
-  fetchReward(wss).catch((err) =>
-    console.error('[Server] fetchReward failed:', err)
-  );
+  sendReward();
   sendNodeHealthData().catch((err) =>
     console.error('[Server] fetchNodeHealth failed ', err)
   );
-}, 10000); // 10-second interval
+  sendPoolInfo();
+  sendMempoolData();
+}, 30000); // 30-second interval
 
 console.log(`WebSocket server running on ws://localhost:${PORT}`);
