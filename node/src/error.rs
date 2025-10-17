@@ -32,6 +32,39 @@ pub enum ErrorKind {
     LogicError,
 }
 #[derive(Debug)]
+pub enum DBErrors {
+    TupleNotInserted { error: String },
+    TupleNotFetched { error: String },
+    InsertionTransactionNotCommitted { error: String, query_name: String },
+    FetchTransactionNotCommitted { error: String, query_name: String },
+}
+impl fmt::Display for DBErrors {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            DBErrors::InsertionTransactionNotCommitted { error, query_name } => {
+                write!(
+                    f,
+                    "Insertion transaction of query {:?} failed due to - {:?}, therefore rolling-back the transaction",
+                    query_name, error
+                )
+            }
+            DBErrors::FetchTransactionNotCommitted { error, query_name } => {
+                write!(
+                    f,
+                    "Fetch transaction of query {:?} failed due to- {:?}, therefore rolling-back the transaction",
+                    query_name, error
+                )
+            }
+            DBErrors::TupleNotInserted { error } => {
+                write!(f, "{:?}", error)
+            }
+            DBErrors::TupleNotFetched { error } => {
+                write!(f, "{:?}", error)
+            }
+        }
+    }
+}
+#[derive(Debug)]
 pub enum StratumErrors {
     InvalidMethod {
         method: String,

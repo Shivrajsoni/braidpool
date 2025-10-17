@@ -18,7 +18,9 @@ use node::SwarmHandler;
 use node::{
     bead::{self, Bead, BeadRequest},
     behaviour::{self, BEAD_ANNOUNCE_PROTOCOL, BRAIDPOOL_TOPIC},
-    braid, cli, ipc, ipc_template_consumer,
+    braid, cli,
+    db::db_handlers::DBHandler,
+    ipc, ipc_template_consumer,
     peer_manager::PeerManager,
     rpc_server::{parse_arguments, run_rpc_server},
     setup_logging, setup_tracing,
@@ -50,6 +52,8 @@ use tokio::sync::{
 #[allow(unused)]
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
+    //Initalizing DB
+    let db_handler: DBHandler = DBHandler::new().await.0;
     let latest_template_id = Arc::new(Mutex::new(String::from("genesis")));
     let latest_template_id_for_notifier = latest_template_id.clone();
     let latest_template_id_for_consumer = latest_template_id.clone();
