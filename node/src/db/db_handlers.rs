@@ -22,22 +22,24 @@ pub struct DBHandler {
 //A transaction starts with a call to Pool::begin or Connection::begin.
 // A transaction should end with a call to commit or rollback. If neither are called before the transaction goes out-of-scope, rollback is called. In other words, rollback is called on drop if the transaction is still in-progress.
 impl DBHandler {
-    pub async fn new() -> (Self, Sender<BraidpoolDBTypes>) {
+    pub async fn new() -> Result<(Self, Sender<BraidpoolDBTypes>), DBErrors> {
         let connection = match init_db().await {
             Ok(conn) => conn,
             Err(error) => {
                 log::error!("An error occurred while initializing and establishing connection with local DB {:?}.", error);
-                panic!("")
+                return Err(DBErrors::ConnectionToDBNotEstablished {
+                    error: error.to_string(),
+                });
             }
         };
         let (db_handler_tx, db_handler_rx) = tokio::sync::mpsc::channel(1024);
-        (
+        Ok((
             Self {
                 receiver: db_handler_rx,
                 db_connection: Arc::new(Mutex::new(connection)),
             },
             db_handler_tx,
-        )
+        ))
     }
     //Insertion handlers private
     async fn insert_bead(&self, bead_tuple: BeadTuple) -> Result<u64, DBErrors> {
@@ -306,29 +308,29 @@ impl DBHandler {
                     InsertTupleTypes::AncestorTimestampTuple {
                         ancestor_timestamp_tuple,
                     } => {
-                        let res = self
+                        let _res = self
                             .insert_ancestor_timestamp(ancestor_timestamp_tuple)
                             .await;
                     }
                     InsertTupleTypes::BeadTuple { bead_tuple } => {
-                        let res = self.insert_bead(bead_tuple).await;
+                        let _res = self.insert_bead(bead_tuple).await;
                     }
                     InsertTupleTypes::CohortIdTuple { cohort_id_tuple } => {
-                        let res = self.insert_cohort_id(cohort_id_tuple).await;
+                        let _res = self.insert_cohort_id(cohort_id_tuple).await;
                     }
                     InsertTupleTypes::CohortTuple { cohort_tuple } => {
-                        let res = self.insert_cohort_tuple(cohort_tuple).await;
+                        let _res = self.insert_cohort_tuple(cohort_tuple).await;
                     }
                     InsertTupleTypes::ParentTimestampTuple {
                         parent_timestamp_tuple,
                     } => {
-                        let res = self.insert_parent_timestamp(parent_timestamp_tuple).await;
+                        let _res = self.insert_parent_timestamp(parent_timestamp_tuple).await;
                     }
                     InsertTupleTypes::RelativeTuple { relative_tuple } => {
-                        let res = self.insert_relative_tuple(relative_tuple).await;
+                        let _res = self.insert_relative_tuple(relative_tuple).await;
                     }
                     InsertTupleTypes::TransactionTuple { transaction_tuple } => {
-                        let res = self.insert_transaction(transaction_tuple).await;
+                        let _res = self.insert_transaction(transaction_tuple).await;
                     }
                 },
                 _ => {
@@ -432,7 +434,7 @@ pub async fn fetch_children_by_bead_id(
 
 #[cfg(test)]
 pub mod test {
-    use sqlx::{sqlite::SqliteConnectOptions, Row, SqlitePool};
+    use sqlx::{sqlite::SqliteConnectOptions, SqlitePool};
     use std::{fs, str::FromStr};
 
     use super::*;
@@ -529,4 +531,5 @@ pub mod test {
         }
         assert_eq!(res.unwrap().rows_affected(), 1);
     }
+    
 }

@@ -53,7 +53,7 @@ use tokio::sync::{
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
     //Initalizing DB
-    let db_handler: DBHandler = DBHandler::new().await.0;
+    let db_handler: DBHandler = DBHandler::new().await.unwrap().0;
     let latest_template_id = Arc::new(Mutex::new(String::from("genesis")));
     let latest_template_id_for_notifier = latest_template_id.clone();
     let latest_template_id_for_consumer = latest_template_id.clone();

@@ -37,10 +37,14 @@ pub enum DBErrors {
     TupleNotFetched { error: String },
     InsertionTransactionNotCommitted { error: String, query_name: String },
     FetchTransactionNotCommitted { error: String, query_name: String },
+    ConnectionToDBNotEstablished { error: String },
 }
 impl fmt::Display for DBErrors {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            DBErrors::ConnectionToDBNotEstablished { error } => {
+                write!(f, "{:?}", error)
+            }
             DBErrors::InsertionTransactionNotCommitted { error, query_name } => {
                 write!(
                     f,
