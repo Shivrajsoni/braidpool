@@ -8,7 +8,7 @@ use crate::{
     error::DBErrors,
 };
 use futures::lock::Mutex;
-use sqlx::{sqlite::SqliteRow, Pool, Sqlite};
+use sqlx::{Pool, Sqlite};
 use tokio::sync::mpsc::{Receiver, Sender};
 
 #[derive(Debug)]
@@ -56,8 +56,8 @@ impl DBHandler {
         match sqlx::query(
             r#"
             INSERT INTO bead (
-                hash, n_version, hash_prev_block, hash_merkle_root, n_time, 
-                n_bits, n_nonce, payout_address, start_timestamp, comm_pub_key,
+                hash, nVersion, hashPrevBlock, hashMerkleRoot, nTime, 
+                nBits, nNonce, payout_address, start_timestamp, comm_pub_key,
                 min_target, weak_target, miner_ip, extra_nonce, 
                 broadcast_timestamp, signature
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -109,7 +109,7 @@ impl DBHandler {
         transaction_tuple: TransactionTuple,
     ) -> Result<u64, DBErrors> {
         let mut insert_transaction_tx = self.db_connection.lock().await.begin().await.unwrap();
-        match sqlx::query("INSERT INTO transaction (bead_id, txid) VALUES (?, ?)")
+        match sqlx::query("INSERT INTO Transactions (bead_id, txid) VALUES (?, ?)")
             .bind(transaction_tuple.bead_id)
             .bind(&transaction_tuple.txid)
             .execute(&mut *insert_transaction_tx)
@@ -145,7 +145,7 @@ impl DBHandler {
     ) -> Result<u64, DBErrors> {
         let mut insert_parent_timestamp_tx = self.db_connection.lock().await.begin().await.unwrap();
         match sqlx::query(
-            "INSERT INTO parent_timestamp (parent, child, timestamp) VALUES (?, ?, ?)",
+            "INSERT INTO ParentTimestamps (parent, child, timestamp) VALUES (?, ?, ?)",
         )
         .bind(parent_timestamp_tuple.parent)
         .bind(parent_timestamp_tuple.child)
@@ -182,7 +182,7 @@ impl DBHandler {
         let mut insert_ancestor_timestamp_tx =
             self.db_connection.lock().await.begin().await.unwrap();
         match sqlx::query(
-            "INSERT INTO ancestor_timestamp (bead_id, ancestor, timestamp) VALUES (?, ?, ?)",
+            "INSERT INTO AncestorTimestamps (bead_id, ancestor, timestamp) VALUES (?, ?, ?)",
         )
         .bind(ancestor_timestamp_tuple.bead_id)
         .bind(ancestor_timestamp_tuple.ancestor)
@@ -214,7 +214,7 @@ impl DBHandler {
     }
     async fn insert_cohort_id(&self, cohort_id_tuple: CohortIdTuple) -> Result<u64, DBErrors> {
         let mut insert_cohort_id_tx = self.db_connection.lock().await.begin().await.unwrap();
-        match sqlx::query("INSERT INTO cohort_id (id) VALUES (?)")
+        match sqlx::query("INSERT INTO CohortIds (id) VALUES (?)")
             .bind(cohort_id_tuple.id)
             .execute(&mut *insert_cohort_id_tx)
             .await
@@ -243,7 +243,7 @@ impl DBHandler {
     }
     async fn insert_cohort_tuple(&self, cohort_tuple: CohortTuple) -> Result<u64, DBErrors> {
         let mut insert_cohort_tx = self.db_connection.lock().await.begin().await.unwrap();
-        match sqlx::query("INSERT INTO cohort (bead_id, cohort_id) VALUES (?, ?)")
+        match sqlx::query("INSERT INTO Cohorts (bead_id, cohort_id) VALUES (?, ?)")
             .bind(cohort_tuple.bead_id)
             .bind(cohort_tuple.cohort_id)
             .execute(&mut *insert_cohort_tx)
@@ -273,7 +273,7 @@ impl DBHandler {
     }
     async fn insert_relative_tuple(&self, relative_tuple: RelativeTuple) -> Result<u64, DBErrors> {
         let mut insert_relative_tx = self.db_connection.lock().await.begin().await.unwrap();
-        match sqlx::query("INSERT INTO relative (parent, child) VALUES (?, ?)")
+        match sqlx::query("INSERT INTO Relatives (parent, child) VALUES (?, ?)")
             .bind(relative_tuple.parent)
             .bind(relative_tuple.child)
             .execute(&mut *insert_relative_tx)
@@ -345,11 +345,13 @@ impl DBHandler {
 pub async fn fetch_transactions_by_bead_id(
     db_connection_arc: Arc<Mutex<Pool<Sqlite>>>,
     bead_id: i64,
-) -> Result<Vec<SqliteRow>, DBErrors> {
-    let rows = match sqlx::query("SELECT  txid FROM transaction WHERE bead_id = ?")
-        .bind(bead_id)
-        .fetch_all(&db_connection_arc.lock().await.clone())
-        .await
+) -> Result<Vec<TransactionTuple>, DBErrors> {
+    let rows = match sqlx::query_as::<_, TransactionTuple>(
+        "SELECT  txid,bead_id FROM Transactions WHERE bead_id = ?",
+    )
+    .bind(bead_id)
+    .fetch_all(&db_connection_arc.lock().await.clone())
+    .await
     {
         Ok(rows) => rows,
         Err(error) => {
@@ -363,8 +365,8 @@ pub async fn fetch_transactions_by_bead_id(
 pub async fn fetch_bead_by_bead_hash(
     db_connection_arc: Arc<Mutex<Pool<Sqlite>>>,
     bead_hash: String,
-) -> Result<SqliteRow, DBErrors> {
-    let row = match sqlx::query("SELECT * FROM bead WHERE hash = ?")
+) -> Result<Option<BeadTuple>, DBErrors> {
+    let row = match sqlx::query_as::<_, BeadTuple>("SELECT * FROM bead WHERE hash = ?")
         .bind(bead_hash)
         .fetch_optional(&db_connection_arc.lock().await.clone())
         .await
@@ -377,17 +379,17 @@ pub async fn fetch_bead_by_bead_hash(
         }
     };
 
-    Ok(row.unwrap())
+    Ok(row)
 }
 pub async fn fetch_beads_by_cohort_id(
     db_connection_arc: Arc<Mutex<Pool<Sqlite>>>,
     cohort_id: i64,
-) -> Result<Vec<SqliteRow>, DBErrors> {
-    let rows = match sqlx::query(
+) -> Result<Vec<BeadTuple>, DBErrors> {
+    let rows = match sqlx::query_as::<_, BeadTuple>(
         r#"
         SELECT b.*
         FROM bead b
-        JOIN cohort c ON c.bead_id = b.id
+        JOIN Cohorts c ON c.bead_id = b.id
         WHERE c.cohort_id = ?
         ORDER BY b.id
         "#,
@@ -408,12 +410,12 @@ pub async fn fetch_beads_by_cohort_id(
 pub async fn fetch_children_by_bead_id(
     db_connection_arc: Arc<Mutex<Pool<Sqlite>>>,
     parent_bead_id: i64,
-) -> Result<Vec<SqliteRow>, DBErrors> {
-    let rows = match sqlx::query(
+) -> Result<Vec<BeadTuple>, DBErrors> {
+    let rows = match sqlx::query_as::<_, BeadTuple>(
         r#"
         SELECT b.*
         FROM bead b
-        JOIN relatives r ON r.child = b.id
+        JOIN Relatives r ON r.child = b.id
         WHERE r.parent = ?
         ORDER BY b.id
         "#,
@@ -454,7 +456,7 @@ pub mod test {
 
         match setup_result {
             Ok(_) => {
-                println!("Schema setup success");
+                println!("Test Schema setup success");
             }
             Err(error) => {
                 panic!("{:?}", error);
@@ -466,7 +468,7 @@ pub mod test {
     #[tokio::test]
     async fn test_insert_bead() {
         let pool = test_db_initializer().await;
-        let mut tx = pool.begin().await.unwrap();
+        let mut insert_test_bead_tx = pool.begin().await.unwrap();
 
         let test_bead = BeadTuple {
             id: None,
@@ -489,8 +491,7 @@ pub mod test {
             broadcast_timestamp: 123456790,
             signature: "3046022100839c1fbc5304de944f697c9f4b1d01d1faeba32d751c0f7acb21ac8a0f436a72022100e89bd46bb3a5a62adc679f659b7ce876d83ee297c7a5587b2011c4fcc72eab45".into(),
         };
-
-        let res = sqlx::query(
+        let res = match sqlx::query(
             r#"
         INSERT INTO bead (
             hash, nVersion, hashPrevBlock, hashMerkleRoot, nTime, 
@@ -500,36 +501,361 @@ pub mod test {
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         "#,
         )
-        .bind(test_bead.hash)
-        .bind(test_bead.nVersion)
-        .bind(test_bead.hashPrevBlock)
-        .bind(test_bead.hashMerkleRoot)
+        .bind(&test_bead.hash)
+        .bind(&test_bead.nVersion)
+        .bind(&test_bead.hashPrevBlock)
+        .bind(&test_bead.hashMerkleRoot)
         .bind(test_bead.nTime)
         .bind(test_bead.nBits)
         .bind(test_bead.nNonce)
-        .bind(test_bead.payout_address)
+        .bind(&test_bead.payout_address)
         .bind(test_bead.start_timestamp)
-        .bind(test_bead.comm_pub_key)
+        .bind(&test_bead.comm_pub_key)
         .bind(test_bead.min_target)
         .bind(test_bead.weak_target)
-        .bind(test_bead.miner_ip)
+        .bind(&test_bead.miner_ip)
         .bind(test_bead.extra_nonce)
         .bind(test_bead.broadcast_timestamp)
-        .bind(test_bead.signature)
-        .execute(&mut *tx)
-        .await;
-        tx.commit().await.unwrap();
-        let fetched_rows = sqlx::query_as::<_, BeadTuple>("select*from bead")
-            .fetch_all(&pool)
+        .bind(&test_bead.signature)
+        .execute(&mut *insert_test_bead_tx)
+        .await
+        {
+            Ok(query_result) => {
+                insert_test_bead_tx.commit().await.unwrap();
+                query_result
+            }
+            Err(error) => {
+                panic!("{:?}", error);
+            }
+        };
+        let fetched_row = fetch_bead_by_bead_hash(
+            Arc::new(Mutex::new(pool)),
+            "3ce39ebba883260f6f9ac43865c077dcd99553434e4ad83fcdabea5b76255673".to_string(),
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            "3ce39ebba883260f6f9ac43865c077dcd99553434e4ad83fcdabea5b76255673".to_string(),
+            fetched_row.unwrap_or(BeadTuple::default()).hash
+        );
+
+        assert_eq!(res.rows_affected(), 1);
+    }
+    #[tokio::test]
+    async fn test_concurrent_access() {
+        let pool = test_db_initializer().await;
+
+        let test_bead = BeadTuple {
+            id: None,
+            hash: "3ce39ebba883260f6f9ac43865c077dcd99553434e4ad83fcdabea5b76255673".into(),
+            nVersion: "00000001".into(),
+            hashPrevBlock: "29979d4a18745698f43f113c111417838cf0c7c31282571b5e341f70e5d8a763"
+                .into(),
+            hashMerkleRoot: "c3051efaaaaba08599f02479ae76f32836a2b73433d408207034ab78609cba1c"
+                .into(),
+            nTime: "5f5f1000".into(),
+            nBits: "1a2b3c4d".into(),
+            nNonce: "030223ff".into(),
+            payout_address: "bcrt1qpa77defz30uavu8lxef98q95rae6m7t8au9vp7".into(),
+            start_timestamp: 123456789,
+            comm_pub_key: "020202020202020202020202020202020202020202020202020202020202020202".into(),
+            min_target: "1d0fff00".into(),
+            weak_target: "ffffffff".into(),
+            miner_ip: "127.0.0.1".into(),
+            extra_nonce: "ffffffffffffffff".into(),
+            broadcast_timestamp: 123456790,
+            signature: "3046022100839c1fbc5304de944f697c9f4b1d01d1faeba32d751c0f7acb21ac8a0f436a72022100e89bd46bb3a5a62adc679f659b7ce876d83ee297c7a5587b2011c4fcc72eab45".into(),
+        };
+        let insert_pool = pool.clone();
+        let bead_clone_for_delete = test_bead.hash.clone();
+        let insert_task_handle = tokio::task::spawn(async move {
+            let mut tx = insert_pool.begin().await.unwrap();
+            sqlx::query(
+                r#"
+            INSERT INTO bead (
+                hash, nVersion, hashPrevBlock, hashMerkleRoot, nTime, 
+                nBits, nNonce, payout_address, start_timestamp, comm_pub_key,
+                min_target, weak_target, miner_ip, extra_nonce, 
+                broadcast_timestamp, signature
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            "#,
+            )
+            .bind(&test_bead.hash)
+            .bind(&test_bead.nVersion)
+            .bind(&test_bead.hashPrevBlock)
+            .bind(&test_bead.hashMerkleRoot)
+            .bind(&test_bead.nTime)
+            .bind(&test_bead.nBits)
+            .bind(&test_bead.nNonce)
+            .bind(&test_bead.payout_address)
+            .bind(test_bead.start_timestamp)
+            .bind(&test_bead.comm_pub_key)
+            .bind(&test_bead.min_target)
+            .bind(&test_bead.weak_target)
+            .bind(&test_bead.miner_ip)
+            .bind(&test_bead.extra_nonce)
+            .bind(test_bead.broadcast_timestamp)
+            .bind(&test_bead.signature)
+            .execute(&mut *tx)
             .await
             .unwrap();
-        for row in fetched_rows.iter() {
-            assert_eq!(
+            tx.commit().await.unwrap();
+        });
+        let delete_pool = pool.clone();
+        let delete_task_handle = tokio::task::spawn(async move {
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+
+            let mut tx = delete_pool.begin().await.unwrap();
+            sqlx::query("DELETE FROM bead WHERE hash = ?")
+                .bind(bead_clone_for_delete)
+                .execute(&mut *tx)
+                .await
+                .unwrap();
+            tx.commit().await.unwrap();
+        });
+
+        let read_task_handle = tokio::task::spawn(async move {
+            tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+
+            let row = fetch_bead_by_bead_hash(
+                Arc::new(Mutex::new(pool)),
                 "3ce39ebba883260f6f9ac43865c077dcd99553434e4ad83fcdabea5b76255673".to_string(),
-                row.hash
+            )
+            .await
+            .unwrap();
+            row
+        });
+        let (_, _, fetched_row) =
+            tokio::join!(insert_task_handle, delete_task_handle, read_task_handle);
+        assert_eq!(fetched_row.unwrap(), Option::None);
+    }
+    #[tokio::test]
+    async fn test_insert_transaction() {
+        let pool = test_db_initializer().await;
+        let test_pool_arc = Arc::new(Mutex::new(pool.clone()));
+        let test_transaction = TransactionTuple {
+            bead_id: 1,
+            txid: "9b8e7a6c5d4f3e2a1b0c9d8e7f6a5b4c3d2e1f0a9b8e7a6c5d4f3e2a1b0c9d8e".into(),
+        };
+        let mut insert_test_bead_tx = test_pool_arc.lock().await.begin().await.unwrap();
+
+        let test_bead = BeadTuple {
+            id: None,
+            hash: "3ce39ebba883260f6f9ac43865c077dcd99553434e4ad83fcdabea5b76255673".into(),
+            nVersion: "00000001".into(),
+            hashPrevBlock: "29979d4a18745698f43f113c111417838cf0c7c31282571b5e341f70e5d8a763"
+                .into(),
+            hashMerkleRoot: "c3051efaaaaba08599f02479ae76f32836a2b73433d408207034ab78609cba1c"
+                .into(),
+            nTime: "5f5f1000".into(),
+            nBits: "1a2b3c4d".into(),
+            nNonce: "030223ff".into(),
+            payout_address: "bcrt1qpa77defz30uavu8lxef98q95rae6m7t8au9vp7".into(),
+            start_timestamp: 123456789,
+            comm_pub_key: "020202020202020202020202020202020202020202020202020202020202020202".into(),
+            min_target: "1d0fff00".into(),
+            weak_target: "ffffffff".into(),
+            miner_ip: "127.0.0.1".into(),
+            extra_nonce: "ffffffffffffffff".into(),
+            broadcast_timestamp: 123456790,
+            signature: "3046022100839c1fbc5304de944f697c9f4b1d01d1faeba32d751c0f7acb21ac8a0f436a72022100e89bd46bb3a5a62adc679f659b7ce876d83ee297c7a5587b2011c4fcc72eab45".into(),
+        };
+        let res = match sqlx::query(
+            r#"
+        INSERT INTO bead (
+            hash, nVersion, hashPrevBlock, hashMerkleRoot, nTime, 
+            nBits, nNonce, payout_address, start_timestamp, comm_pub_key,
+            min_target, weak_target, miner_ip, extra_nonce, 
+            broadcast_timestamp, signature
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        "#,
+        )
+        .bind(&test_bead.hash)
+        .bind(&test_bead.nVersion)
+        .bind(&test_bead.hashPrevBlock)
+        .bind(&test_bead.hashMerkleRoot)
+        .bind(test_bead.nTime)
+        .bind(test_bead.nBits)
+        .bind(test_bead.nNonce)
+        .bind(&test_bead.payout_address)
+        .bind(test_bead.start_timestamp)
+        .bind(&test_bead.comm_pub_key)
+        .bind(test_bead.min_target)
+        .bind(test_bead.weak_target)
+        .bind(&test_bead.miner_ip)
+        .bind(test_bead.extra_nonce)
+        .bind(test_bead.broadcast_timestamp)
+        .bind(&test_bead.signature)
+        .execute(&mut *insert_test_bead_tx)
+        .await
+        {
+            Ok(query_result) => {
+                insert_test_bead_tx.commit().await.unwrap();
+                query_result
+            }
+            Err(error) => {
+                panic!("{:?}", error);
+            }
+        };
+        assert_eq!(res.rows_affected(), 1);
+        let fetched_row = fetch_bead_by_bead_hash(
+            Arc::clone(&test_pool_arc),
+            "3ce39ebba883260f6f9ac43865c077dcd99553434e4ad83fcdabea5b76255673".to_string(),
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            fetched_row.unwrap().hash,
+            "3ce39ebba883260f6f9ac43865c077dcd99553434e4ad83fcdabea5b76255673".to_string()
+        );
+        let mut insert_test_transaction_tx = test_pool_arc.lock().await.begin().await.unwrap();
+
+        let test_query_res =
+            match sqlx::query("INSERT INTO Transactions (bead_id, txid) VALUES (?, ?)")
+                .bind(test_transaction.bead_id)
+                .bind(test_transaction.txid)
+                .execute(&mut *insert_test_transaction_tx)
+                .await
+            {
+                Ok(query_result) => {
+                    let _res = insert_test_transaction_tx.commit().await;
+                    println!("Test transaction insertion committed");
+                    query_result
+                }
+                Err(error) => {
+                    insert_test_transaction_tx.rollback().await.unwrap();
+                    panic!("Rollback performed due to an error - {:?}.", error)
+                }
+            };
+        assert_eq!(test_query_res.rows_affected(), 1);
+
+        let fetch_test_tx_res = fetch_transactions_by_bead_id(Arc::clone(&test_pool_arc), 1)
+            .await
+            .unwrap();
+        for r in fetch_test_tx_res {
+            assert_eq!(
+                r.txid,
+                "9b8e7a6c5d4f3e2a1b0c9d8e7f6a5b4c3d2e1f0a9b8e7a6c5d4f3e2a1b0c9d8e".to_string()
             );
         }
-        assert_eq!(res.unwrap().rows_affected(), 1);
     }
-    
+    #[tokio::test]
+    async fn test_insert_cohort() {
+        let pool = test_db_initializer().await;
+        let pool_arc = Arc::new(Mutex::new(pool.clone()));
+
+        let mut insert_test_bead_tx = pool_arc.lock().await.begin().await.unwrap();
+
+        let test_bead = BeadTuple {
+            id: None,
+            hash: "3ce39ebba883260f6f9ac43865c077dcd99553434e4ad83fcdabea5b76255673".into(),
+            nVersion: "00000001".into(),
+            hashPrevBlock: "29979d4a18745698f43f113c111417838cf0c7c31282571b5e341f70e5d8a763"
+                .into(),
+            hashMerkleRoot: "c3051efaaaaba08599f02479ae76f32836a2b73433d408207034ab78609cba1c"
+                .into(),
+            nTime: "5f5f1000".into(),
+            nBits: "1a2b3c4d".into(),
+            nNonce: "030223ff".into(),
+            payout_address: "bcrt1qpa77defz30uavu8lxef98q95rae6m7t8au9vp7".into(),
+            start_timestamp: 123456789,
+            comm_pub_key: "020202020202020202020202020202020202020202020202020202020202020202".into(),
+            min_target: "1d0fff00".into(),
+            weak_target: "ffffffff".into(),
+            miner_ip: "127.0.0.1".into(),
+            extra_nonce: "ffffffffffffffff".into(),
+            broadcast_timestamp: 123456790,
+            signature: "3046022100839c1fbc5304de944f697c9f4b1d01d1faeba32d751c0f7acb21ac8a0f436a72022100e89bd46bb3a5a62adc679f659b7ce876d83ee297c7a5587b2011c4fcc72eab45".into(),
+        };
+        let res = match sqlx::query(
+            r#"
+        INSERT INTO bead (
+            hash, nVersion, hashPrevBlock, hashMerkleRoot, nTime, 
+            nBits, nNonce, payout_address, start_timestamp, comm_pub_key,
+            min_target, weak_target, miner_ip, extra_nonce, 
+            broadcast_timestamp, signature
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        "#,
+        )
+        .bind(&test_bead.hash)
+        .bind(&test_bead.nVersion)
+        .bind(&test_bead.hashPrevBlock)
+        .bind(&test_bead.hashMerkleRoot)
+        .bind(test_bead.nTime)
+        .bind(test_bead.nBits)
+        .bind(test_bead.nNonce)
+        .bind(&test_bead.payout_address)
+        .bind(test_bead.start_timestamp)
+        .bind(&test_bead.comm_pub_key)
+        .bind(test_bead.min_target)
+        .bind(test_bead.weak_target)
+        .bind(&test_bead.miner_ip)
+        .bind(test_bead.extra_nonce)
+        .bind(test_bead.broadcast_timestamp)
+        .bind(&test_bead.signature)
+        .execute(&mut *insert_test_bead_tx)
+        .await
+        {
+            Ok(query_result) => {
+                insert_test_bead_tx.commit().await.unwrap();
+                query_result
+            }
+            Err(error) => {
+                panic!("{:?}", error);
+            }
+        };
+
+        let bead_id = res.last_insert_rowid();
+        assert_eq!(bead_id, 1);
+        let test_cohort_id: CohortIdTuple = CohortIdTuple { id: 1 };
+        let mut insert_test_cohortid_tx = pool_arc.lock().await.begin().await.unwrap();
+        let test_cohort_id_insert_res = match sqlx::query("INSERT INTO CohortIds (id) VALUES (?)")
+            .bind(test_cohort_id.id)
+            .execute(&mut *insert_test_cohortid_tx)
+            .await
+        {
+            Ok(query_result) => {
+                insert_test_cohortid_tx.commit().await.unwrap();
+                query_result
+            }
+            Err(error) => {
+                insert_test_cohortid_tx.rollback().await.unwrap();
+                panic!("{:?}", error)
+            }
+        };
+
+        assert_eq!(test_cohort_id_insert_res.rows_affected(), 1);
+
+        let mut insert_test_cohort_tx = pool_arc.lock().await.begin().await.unwrap();
+        let test_cohort_tuple = CohortTuple {
+            bead_id: 1,
+            cohort_id: Some(1),
+        };
+        let cohort_insert_res =
+            match sqlx::query("INSERT INTO Cohorts (bead_id, cohort_id) VALUES (?, ?)")
+                .bind(test_cohort_tuple.bead_id)
+                .bind(test_cohort_tuple.cohort_id)
+                .execute(&mut *insert_test_cohort_tx)
+                .await
+            {
+                Ok(query_result) => {
+                    let _res = insert_test_cohort_tx.commit().await;
+                    query_result
+                }
+                Err(error) => {
+                    insert_test_cohort_tx.rollback().await.unwrap();
+                    panic!("{:?}", error);
+                }
+            };
+
+        assert_eq!(cohort_insert_res.rows_affected(), 1);
+
+        let fetched_test_cohort_rows = fetch_beads_by_cohort_id(pool_arc.clone(), 1).await.unwrap();
+        for bead in fetched_test_cohort_rows {
+            assert_eq!(
+                bead.hash,
+                "3ce39ebba883260f6f9ac43865c077dcd99553434e4ad83fcdabea5b76255673".to_string()
+            );
+        }
+    }
 }
