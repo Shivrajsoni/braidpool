@@ -11,8 +11,6 @@ use crate::uncommitted_metadata::UnCommittedMetadata;
 #[cfg(test)]
 pub use bitcoin::ecdsa::Signature;
 #[cfg(test)]
-use bitcoin::p2p::Address as P2P_Address;
-#[cfg(test)]
 use bitcoin::BlockHeader;
 #[cfg(test)]
 pub use bitcoin::{absolute::Time, p2p::address::AddrV2, PublicKey, Transaction};

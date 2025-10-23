@@ -1,4 +1,6 @@
 #![allow(non_snake_case)]
+
+use crate::bead::Bead;
 pub mod db_handlers;
 pub mod init_db;
 
@@ -107,6 +109,9 @@ pub enum InsertTupleTypes {
     },
     AncestorTimestampTuple {
         ancestor_timestamp_tuple: AncestorTimestampTuple,
+    },
+    InsertBeadSequentially {
+        bead_to_insert: Bead,
     },
 }
 #[derive(Debug, Clone)]

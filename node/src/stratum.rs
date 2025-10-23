@@ -651,7 +651,7 @@ impl DownstreamClient {
             }
         }
         let extranonce_2_raw_value = i32::from_str_radix(extranonce2, 16).unwrap();
-        let swarm_command_sent = match swarm_handler
+        let _swarm_command_sent = match swarm_handler
             .lock()
             .await
             .propagate_valid_bead(
@@ -1717,7 +1717,7 @@ impl Server {
                         //Parsing the lines read from buffer to find out whether they are valid JSON request type to be server as per
                         //stratum or not .
                         match serde_json::from_str::<StandardRequest>(&line) {
-                                Ok(request) => {
+                                Ok(_request) => {
                          let server_request_res:Result<StratumResponses, StratumErrors> = downstream_client.lock().await.handle_client_to_server_request(serde_json::from_str(&line).unwrap(),mining_job_map.clone(),downstream_message_sender.clone(),notification_sender.clone(),peer_addr.to_string(),swarm_handler.clone()).await;
                          match server_request_res{
                             Ok(_)=>{

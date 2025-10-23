@@ -251,7 +251,7 @@ impl Braid {
     }
 }
 #[allow(unused)]
-mod consensus_functions {
+pub mod consensus_functions {
     use num::{One, Zero};
 
     use super::*;

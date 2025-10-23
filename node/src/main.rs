@@ -177,7 +177,8 @@ async fn main() -> Result<(), Box<dyn Error>> {
     // Initializing the braid object with read write lock
     //for supporting concurrent readers and single writer
     let braid: Arc<RwLock<braid::Braid>> = Arc::new(RwLock::new(braid::Braid::new(genesis_beads)));
-
+    //Initializing DB
+    let db_handler: DBHandler = DBHandler::new(Arc::clone(&braid)).await.unwrap().0;
     //spawning the rpc server
     if let Some(rpc_command) = args.command {
         let server_address = tokio::spawn(run_rpc_server(Arc::clone(&braid)));
@@ -192,7 +193,6 @@ async fn main() -> Result<(), Box<dyn Error>> {
     // load beads from db (if present) and insert in braid here
     // Initializing the peer manager
     let mut peer_manager = PeerManager::new(8);
-
     //For local testing uncomment this keypair peer since it running to process will
     //result in same peerID leading to OutgoingConnectionError
 
