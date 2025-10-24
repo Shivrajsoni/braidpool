@@ -72,9 +72,7 @@ impl DBHandler {
                 }
             }
         }
-        let braid_children_set: HashMap<usize, HashSet<usize>> =
-            consensus_functions::reverse(&braid_data, &braid_parent_set);
-        //Constructing ancestor set
+        //Constructing ancestor set, children set will be empty as it will become the next tip
         let mut ancestor_mapping: HashMap<usize, HashSet<usize>> = HashMap::new();
         consensus_functions::updating_ancestors(
             &braid_data,
@@ -82,55 +80,21 @@ impl DBHandler {
             &mut ancestor_mapping,
             &braid_parent_set,
         );
+        let bead_id = braid_data
+            .bead_index_mapping
+            .get(&bead.block_header.block_hash())
+            .unwrap();
         //Begin the insertion transaction
         let mut tx = self.db_connection.lock().await.begin().await.unwrap();
-        let bead_id = match sqlx::query(
-            r#"
-            INSERT INTO bead (
-                hash, nVersion, hashPrevBlock, hashMerkleRoot, nTime, 
-                nBits, nNonce, payout_address, start_timestamp, comm_pub_key,
-                min_target, weak_target, miner_ip, extra_nonce, 
-                broadcast_timestamp, signature
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            "#,
-        )
-        .bind(bead.block_header.block_hash().to_string())
-        .bind(bead.block_header.version.to_consensus().to_string())
-        .bind(bead.block_header.prev_blockhash.to_string())
-        .bind(bead.block_header.merkle_root.to_string())
-        .bind(bead.block_header.time.to_u32().to_string())
-        .bind(bead.block_header.bits.to_hex())
-        .bind(bead.block_header.nonce.to_string())
-        .bind(bead.committed_metadata.payout_address)
-        .bind(bead.committed_metadata.start_timestamp.to_string())
-        .bind(bead.committed_metadata.comm_pub_key.to_string())
-        .bind(bead.committed_metadata.min_target.to_hex())
-        .bind(bead.committed_metadata.weak_target.to_hex())
-        .bind(bead.committed_metadata.miner_ip)
-        .bind(bead.uncommitted_metadata.extra_nonce.to_string())
-        .bind(bead.uncommitted_metadata.broadcast_timestamp.to_string())
-        .bind(bead.uncommitted_metadata.signature.to_string())
-        .execute(&mut *tx)
-        .await
-        {
-            Ok(value) => value.last_insert_rowid(),
-            Err(error) => {
-                tx.rollback().await.unwrap();
-                return Err(DBErrors::TupleNotInserted {
-                    error: error.to_string(),
-                });
-            }
-        };
         //Considering the index of the beads in braid will be same as the (insertion ids-1)
-        let current_bead_parent_set = braid_parent_set.get(&(bead_id as usize)).unwrap();
-        let current_bead_child_set = braid_children_set.get(&(bead_id as usize)).unwrap();
+        let current_bead_parent_set = braid_parent_set.get(&(bead_id)).unwrap();
         let mut relative_tuples: Vec<RelativeTuple> = Vec::new();
         let mut parent_timestamp_tuples: Vec<ParentTimestampTuple> = Vec::new();
         //Constructing relatives and parent_timestamps
         for parent_bead in current_bead_parent_set {
             relative_tuples.push(RelativeTuple {
                 parent: (*parent_bead as i64) + 1,
-                child: bead_id,
+                child: *bead_id as i64,
             });
             let current_parent_timestamp = braid_data
                 .beads
@@ -140,82 +104,84 @@ impl DBHandler {
                 .start_timestamp;
             parent_timestamp_tuples.push(ParentTimestampTuple {
                 parent: (*parent_bead as i64) + 1,
-                child: bead_id,
+                child: *bead_id as i64,
                 timestamp: current_parent_timestamp.to_u32().to_i64().unwrap(),
-            });
-        }
-        for child_bead in current_bead_child_set {
-            relative_tuples.push(RelativeTuple {
-                parent: bead_id,
-                child: (*child_bead as i64) + 1,
-            });
-            parent_timestamp_tuples.push(ParentTimestampTuple {
-                parent: bead_id,
-                child: (*child_bead as i64) + 1,
-                timestamp: bead
-                    .committed_metadata
-                    .start_timestamp
-                    .to_u32()
-                    .to_i64()
-                    .unwrap(),
-            });
-        }
-        //Inserting relatives in batch
-        let mut relative_query_builder: sqlx::QueryBuilder<sqlx::Sqlite> =
-            sqlx::QueryBuilder::new("INSERT INTO Relatives (child, parent) ");
-
-        relative_query_builder.push_values(relative_tuples.iter(), |mut b, rel_tuple| {
-            b.push_bind(rel_tuple.child).push_bind(rel_tuple.parent);
-        });
-
-        if let Err(error) = relative_query_builder.build().execute(&mut *tx).await {
-            tx.rollback().await.unwrap();
-            return Err(DBErrors::TupleNotInserted {
-                error: format!("Relative batch insert failed: {}", error),
             });
         }
         let mut transaction_tuples: Vec<TransactionTuple> = Vec::new();
         for bead_tx in bead.committed_metadata.transactions.iter() {
             transaction_tuples.push(TransactionTuple {
-                bead_id,
+                bead_id: *bead_id as i64,
                 txid: bead_tx.compute_txid().to_string(),
             });
         }
-        //Building query builder for builk insertion operations
-        let mut transaction_query_builder: sqlx::QueryBuilder<sqlx::Sqlite> =
-            sqlx::QueryBuilder::new("INSERT INTO Transactions (bead_id, txid) ");
-        transaction_query_builder.push_values(transaction_tuples.iter(), |mut b, tx_tuple| {
-            b.push_bind(bead_id).push_bind(&tx_tuple.txid);
-        });
-        if let Err(error) = transaction_query_builder.build().execute(&mut *tx).await {
-            tx.rollback().await.unwrap();
-            return Err(DBErrors::TupleNotInserted {
-                error: format!("Transaction batch insert failed: {}", error),
-            });
-        }
-        let mut parent_timestamps_query_builder = sqlx::QueryBuilder::<Sqlite>::new(
-            "INSERT INTO ParentTimestamps (parent, child, timestamp) ",
-        );
+        let transactions_values = transaction_tuples
+            .iter()
+            .map(|t| format!("(last_insert_rowid(), '{}')", t.txid))
+            .collect::<Vec<_>>()
+            .join(", ");
 
-        parent_timestamps_query_builder.push_values(
-            parent_timestamp_tuples.iter(),
-            |mut b, tuple| {
-                b.push_bind(&tuple.parent)
-                    .push_bind(&tuple.child)
-                    .push_bind(&tuple.timestamp);
-            },
-        );
+        let parent_timestamps_values = parent_timestamp_tuples
+            .iter()
+            .map(|p| format!("({}, {}, {})", p.parent, p.child, p.timestamp))
+            .collect::<Vec<_>>()
+            .join(", ");
 
-        if let Err(error) = parent_timestamps_query_builder
-            .build()
+        let relatives_values = relative_tuples
+            .iter()
+            .map(|r| format!("({}, {})", r.parent, r.child))
+            .collect::<Vec<_>>()
+            .join(", ");
+
+        let sql_query = format!(
+            "        
+        INSERT INTO bead (
+            hash, nVersion, hashPrevBlock, hashMerkleRoot, nTime, 
+            nBits, nNonce, payout_address, start_timestamp, comm_pub_key,
+            min_target, weak_target, miner_ip, extra_nonce, 
+            broadcast_timestamp, signature
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+
+        INSERT INTO Transactions (bead_id, txid)
+        VALUES
+        {transactions_values};
+        INSERT INTO Relatives (child, parent) VALUES {relatives_values};
+        INSERT INTO ParentTimestamps (parent, child, timestamp) VALUES {parent_timestamps_values};
+
+        "
+        );
+        let _res = match sqlx::query(&sql_query)
+            .bind(bead.block_header.block_hash().to_string())
+            .bind(bead.block_header.version.to_consensus().to_string())
+            .bind(bead.block_header.prev_blockhash.to_string())
+            .bind(bead.block_header.merkle_root.to_string())
+            .bind(bead.block_header.time.to_u32().to_string())
+            .bind(bead.block_header.bits.to_hex())
+            .bind(bead.block_header.nonce.to_string())
+            .bind(bead.committed_metadata.payout_address)
+            .bind(bead.committed_metadata.start_timestamp.to_string())
+            .bind(bead.committed_metadata.comm_pub_key.to_string())
+            .bind(bead.committed_metadata.min_target.to_hex())
+            .bind(bead.committed_metadata.weak_target.to_hex())
+            .bind(bead.committed_metadata.miner_ip)
+            .bind(bead.uncommitted_metadata.extra_nonce.to_string())
+            .bind(bead.uncommitted_metadata.broadcast_timestamp.to_string())
+            .bind(bead.uncommitted_metadata.signature.to_string())
             .execute(&mut *tx)
             .await
         {
-            tx.rollback().await.unwrap();
-            return Err(DBErrors::TupleNotInserted {
-                error: error.to_string(),
-            });
-        }
+            Ok(query_result) => query_result,
+            Err(error) => {
+                let _res = tx.rollback().await;
+                log::info!(
+                    "An error occurred while rolling back transaction - {:?}",
+                    error
+                );
+                return Err(DBErrors::TupleNotInserted {
+                    error: error.to_string(),
+                });
+            }
+        };
         match tx.commit().await {
             Ok(_) => {
                 log::info!("All related insertions committed successfully");
@@ -1041,6 +1007,101 @@ pub mod test {
                 bead.hash,
                 "3ce39ebba883260f6f9ac43865c077dcd99553434e4ad83fcdabea5b76255673".to_string()
             );
+        }
+    }
+    #[tokio::test]
+    async fn test_single_sql_query() {
+        let pool = test_db_initializer().await;
+        let mut tx = pool.begin().await.unwrap();
+        let test_bead = BeadTuple {
+            id: None,
+            hash: "3ce39ebba883260f6f9ac43865c077dcd99553434e4ad83fcdabea5b76255673".into(),
+            nVersion: "00000001".into(),
+            hashPrevBlock: "29979d4a18745698f43f113c111417838cf0c7c31282571b5e341f70e5d8a763"
+                .into(),
+            hashMerkleRoot: "c3051efaaaaba08599f02479ae76f32836a2b73433d408207034ab78609cba1c"
+                .into(),
+            nTime: "5f5f1000".into(),
+            nBits: "1a2b3c4d".into(),
+            nNonce: "030223ff".into(),
+            payout_address: "bcrt1qpa77defz30uavu8lxef98q95rae6m7t8au9vp7".into(),
+            start_timestamp: 123456789,
+            comm_pub_key: "020202020202020202020202020202020202020202020202020202020202020202".into(),
+            min_target: "1d0fff00".into(),
+            weak_target: "ffffffff".into(),
+            miner_ip: "127.0.0.1".into(),
+            extra_nonce: "ffffffffffffffff".into(),
+            broadcast_timestamp: 123456790,
+            signature: "3046022100839c1fbc5304de944f697c9f4b1d01d1faeba32d751c0f7acb21ac8a0f436a72022100e89bd46bb3a5a62adc679f659b7ce876d83ee297c7a5587b2011c4fcc72eab45".into(),
+        };
+        let test_transactions = vec![TransactionTuple {
+            bead_id: 1,
+            txid: "9b8e7a6c5d4f3e2a1b0c9d8e7f6a5b4c3d2e1f0a9b8e7a6c5d4f3e2a1b0c9d8e".into(),
+        }];
+        let transactions_values = test_transactions
+            .iter()
+            .map(|t| format!("(last_insert_rowid(), '{}')", t.txid))
+            .collect::<Vec<_>>()
+            .join(", ");
+
+        // let parent_timestamps_values = parent_timestamps
+        //     .iter()
+        //     .map(|p| format!("({}, {}, {})", p.parent, p.child, p.timestamp))
+        //     .collect::<Vec<_>>()
+        //     .join(", ");
+
+        // let relatives_values = relatives
+        //     .iter()
+        //     .map(|r| format!("({}, {})", r.parent, r.child))
+        //     .collect::<Vec<_>>()
+        //     .join(", ");
+
+        // let ancestor_timestamps_values = ancestor_timestamps
+        //     .iter()
+        //     .map(|a| format!("({}, {}, {})", a.bead_id, a.ancestor, a.timestamp))
+        //     .collect::<Vec<_>>()
+        //     .join(", ");
+
+        let sql_query = format!(
+            "        
+        INSERT INTO bead (
+            hash, nVersion, hashPrevBlock, hashMerkleRoot, nTime, 
+            nBits, nNonce, payout_address, start_timestamp, comm_pub_key,
+            min_target, weak_target, miner_ip, extra_nonce, 
+            broadcast_timestamp, signature
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+
+
+        INSERT INTO Transactions (bead_id, txid)
+        VALUES
+        {transactions_values};
+
+
+        "
+        );
+        println!("QUERY - {:?}", sql_query);
+        if let Err(error) = sqlx::query(&sql_query)
+            .bind(&test_bead.hash)
+            .bind(&test_bead.nVersion)
+            .bind(&test_bead.hashPrevBlock)
+            .bind(&test_bead.hashMerkleRoot)
+            .bind(test_bead.nTime)
+            .bind(test_bead.nBits)
+            .bind(test_bead.nNonce)
+            .bind(&test_bead.payout_address)
+            .bind(test_bead.start_timestamp)
+            .bind(&test_bead.comm_pub_key)
+            .bind(test_bead.min_target)
+            .bind(test_bead.weak_target)
+            .bind(&test_bead.miner_ip)
+            .bind(test_bead.extra_nonce)
+            .bind(test_bead.broadcast_timestamp)
+            .bind(&test_bead.signature)
+            .execute(&mut *tx)
+            .await
+        {
+            let _res = tx.rollback().await.unwrap();
+            panic!("Error - {:?}", error);
         }
     }
 }

@@ -15,6 +15,7 @@ use tokio::sync::mpsc::{self, Receiver, Sender};
 
 use crate::{
     bead::Bead,
+    braid::Braid,
     committed_metadata::{CommittedMetadata, TimeVec},
     error::{IPCtemplateError, StratumErrors},
     stratum::{BlockTemplate, NotifyCmd},
@@ -243,14 +244,16 @@ pub enum SwarmCommand {
 }
 pub struct SwarmHandler {
     pub command_sender: Sender<SwarmCommand>,
+    braid_arc: Arc<tokio::sync::RwLock<Braid>>,
 }
 impl SwarmHandler {
-    pub fn new() -> (Self, Receiver<SwarmCommand>) {
+    pub fn new(braid_arc: Arc<tokio::sync::RwLock<Braid>>) -> (Self, Receiver<SwarmCommand>) {
         let (swarm_stratum_bridge_tx, swarm_stratum_bridge_rx) =
             mpsc::channel::<SwarmCommand>(1024);
         (
             Self {
                 command_sender: swarm_stratum_bridge_tx,
+                braid_arc: Arc::clone(&braid_arc),
             },
             swarm_stratum_bridge_rx,
         )
@@ -269,8 +272,19 @@ impl SwarmHandler {
         let public_key = "020202020202020202020202020202020202020202020202020202020202020202"
             .parse::<bitcoin::PublicKey>()
             .unwrap();
-        let time_hash_set = TimeVec(Vec::new());
-        let parent_hash_set: HashSet<BlockHash> = HashSet::new();
+        let mut time_hash_set = TimeVec(Vec::new());
+        let mut parent_hash_set: HashSet<BlockHash> = HashSet::new();
+        let mut braid_data = self.braid_arc.write().await;
+        let tips_index = &braid_data.tips;
+        //Committing parents data in bead
+        for tip_bead in tips_index {
+            let current_tip_bead = braid_data.beads.get(*tip_bead).unwrap();
+            parent_hash_set.insert(current_tip_bead.block_header.block_hash());
+            time_hash_set
+                .0
+                .push(current_tip_bead.committed_metadata.start_timestamp);
+        }
+
         //TODO:This will be replaced via the allotted `WeakShareDifficulty` after Difficulty adjustment
         let weak_target = CompactTarget::from_consensus(32);
         //Mindiff
@@ -322,6 +336,9 @@ impl SwarmHandler {
             block_header: candidate_block_header,
             uncommitted_metadata: candidate_block_bead_uncommitted_metadata,
         };
+        let status = braid_data.extend(&weak_share);
+        log::info!("Bead extended successfully - {:?}", status);
+
         let serialized_weak_share_bytes = bitcoin::consensus::serialize(&weak_share);
         //After validation of the candidate block constructed by the downstream node sending it to swarm for further propogation
         match self

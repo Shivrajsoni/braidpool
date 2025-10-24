@@ -49,31 +49,35 @@ use tokio::sync::{
     RwLock,
 };
 
-#[allow(unused)]
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
+    let genesis_beads = Vec::from([]);
+    // Initializing the braid object with read write lock
+    //for supporting concurrent readers and single writer
+    let braid: Arc<RwLock<braid::Braid>> = Arc::new(RwLock::new(braid::Braid::new(genesis_beads)));
     //Initializing DB
-    let db_handler: DBHandler = DBHandler::new().await.unwrap().0;
+    let _db_handler: DBHandler = DBHandler::new(Arc::clone(&braid)).await.unwrap().0;
+    //Initializing DB
     let latest_template_id = Arc::new(Mutex::new(String::from("genesis")));
     let latest_template_id_for_notifier = latest_template_id.clone();
     let latest_template_id_for_consumer = latest_template_id.clone();
     //latest available template to be cached for the newest connection until new job is received
-    let mut latest_template = Arc::new(Mutex::new(BlockTemplate::default()));
+    let latest_template = Arc::new(Mutex::new(BlockTemplate::default()));
     //latest available template merkle branch
-    let mut latest_template_merkle_branch = Arc::new(Mutex::new(Vec::new()));
+    let latest_template_merkle_branch = Arc::new(Mutex::new(Vec::new()));
     let mut latest_template_ref = latest_template.clone();
     let mut latest_template_merkle_branch_ref = latest_template_merkle_branch.clone();
     //One will go into the IPC and the other will go to the `notifier`
     let (notification_tx, notification_rx) = mpsc::channel::<NotifyCmd>(1024);
     //Communication bridge between stratum and network swarm and swarm commands also, for communicating share population and propogating them further
-    let (swarm_handler, mut swarm_command_receiver) = SwarmHandler::new();
+    let (swarm_handler, mut swarm_command_receiver) = SwarmHandler::new(Arc::clone(&braid));
     let swarm_handler_arc = Arc::new(Mutex::new(swarm_handler));
     //cloning the channel to be sent across different interfaces
     let notification_tx_clone = notification_tx.clone();
     //Connection mapping for all the downstream connection connected to the stratum server
     let connection_mapping = Arc::new(Mutex::new(ConnectionMapping::new()));
     //Mining job map keeping all the jobs provided to the downstream
-    let mut mining_job_map = Arc::new(Mutex::new(HashMap::new()));
+    let mining_job_map = Arc::new(Mutex::new(HashMap::new()));
     //Intializing `notifier` for mining.notify
     let mut notifier: Notifier = Notifier::new(notification_rx, Arc::clone(&mining_job_map));
     //Stratum configuration initialization
@@ -89,7 +93,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     );
     //Running the notification service
     tokio::spawn(async move {
-        notifier
+        let _res = notifier
             .run_notifier(
                 connection_mapping.clone(),
                 &mut latest_template_ref,
@@ -100,7 +104,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     });
     //Running the stratum service
     tokio::spawn(async move {
-        stratum_server
+        let _res = stratum_server
             .run_stratum_service(
                 mining_job_map,
                 notification_tx_clone,
@@ -172,13 +176,6 @@ async fn main() -> Result<(), Box<dyn Error>> {
             keypair
         }
     };
-
-    let genesis_beads = Vec::from([]);
-    // Initializing the braid object with read write lock
-    //for supporting concurrent readers and single writer
-    let braid: Arc<RwLock<braid::Braid>> = Arc::new(RwLock::new(braid::Braid::new(genesis_beads)));
-    //Initializing DB
-    let db_handler: DBHandler = DBHandler::new(Arc::clone(&braid)).await.unwrap().0;
     //spawning the rpc server
     if let Some(rpc_command) = args.command {
         let server_address = tokio::spawn(run_rpc_server(Arc::clone(&braid)));
@@ -448,7 +445,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
                          log::info!("Sent identify info to {:?}", peer_id);
                      }
                      SwarmEvent::Behaviour(BraidPoolBehaviourEvent::Identify(
-                         identify::Event::Received { info, peer_id, .. },
+                         identify::Event::Received { info,  .. },
                      )) => {
                          let info_reference = info.clone();
                          log::info!(
@@ -486,8 +483,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
                              log::info!("Failed to get closest peers: {err}");
                          }
                         QueryResult::Bootstrap(Ok(BootstrapOk {
-                            peer,
-                            num_remaining,
+                            peer, ..
                         }))=>{
                             log::info!("Peer recieved while bootstrapping - {:?}",peer);
                         }
@@ -699,9 +695,6 @@ async fn main() -> Result<(), Box<dyn Error>> {
                              .bead_announce
                              .publish(current_broadcast_topic.clone(), bead_bytes);
                         log::info!("Published to flood sub topic successfully !");
-                     }
-                     _=>{
-
                      }
                  }
              }
