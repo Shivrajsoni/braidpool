@@ -17,6 +17,7 @@ use crate::{
     bead::Bead,
     braid::Braid,
     committed_metadata::{CommittedMetadata, TimeVec},
+    db::BraidpoolDBTypes,
     error::{IPCtemplateError, StratumErrors},
     stratum::{BlockTemplate, NotifyCmd},
     uncommitted_metadata::UnCommittedMetadata,
@@ -245,15 +246,20 @@ pub enum SwarmCommand {
 pub struct SwarmHandler {
     pub command_sender: Sender<SwarmCommand>,
     braid_arc: Arc<tokio::sync::RwLock<Braid>>,
+    db_command_sender: tokio::sync::mpsc::Sender<BraidpoolDBTypes>,
 }
 impl SwarmHandler {
-    pub fn new(braid_arc: Arc<tokio::sync::RwLock<Braid>>) -> (Self, Receiver<SwarmCommand>) {
+    pub fn new(
+        braid_arc: Arc<tokio::sync::RwLock<Braid>>,
+        db_command_sender: tokio::sync::mpsc::Sender<BraidpoolDBTypes>,
+    ) -> (Self, Receiver<SwarmCommand>) {
         let (swarm_stratum_bridge_tx, swarm_stratum_bridge_rx) =
             mpsc::channel::<SwarmCommand>(1024);
         (
             Self {
                 command_sender: swarm_stratum_bridge_tx,
                 braid_arc: Arc::clone(&braid_arc),
+                db_command_sender,
             },
             swarm_stratum_bridge_rx,
         )
@@ -338,7 +344,22 @@ impl SwarmHandler {
         };
         let status = braid_data.extend(&weak_share);
         log::info!("Bead extended successfully - {:?}", status);
-
+        let _db_insertion_command = match self
+            .db_command_sender
+            .send(BraidpoolDBTypes::InsertTupleTypes {
+                query: db::InsertTupleTypes::InsertBeadSequentially {
+                    bead_to_insert: weak_share.clone(),
+                },
+            })
+            .await
+        {
+            Ok(_) => {
+                log::info!("Bead insertion query sent");
+            }
+            Err(error) => {
+                log::info!("{:?}", error);
+            }
+        };
         let serialized_weak_share_bytes = bitcoin::consensus::serialize(&weak_share);
         //After validation of the candidate block constructed by the downstream node sending it to swarm for further propogation
         match self

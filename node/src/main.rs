@@ -55,8 +55,8 @@ async fn main() -> Result<(), Box<dyn Error>> {
     // Initializing the braid object with read write lock
     //for supporting concurrent readers and single writer
     let braid: Arc<RwLock<braid::Braid>> = Arc::new(RwLock::new(braid::Braid::new(genesis_beads)));
-    //Initializing DB
-    let _db_handler: DBHandler = DBHandler::new(Arc::clone(&braid)).await.unwrap().0;
+    //Initializing DB and db command handler
+    let (_db_handler, db_tx) = DBHandler::new(Arc::clone(&braid)).await.unwrap();
     //Initializing DB
     let latest_template_id = Arc::new(Mutex::new(String::from("genesis")));
     let latest_template_id_for_notifier = latest_template_id.clone();
@@ -70,7 +70,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     //One will go into the IPC and the other will go to the `notifier`
     let (notification_tx, notification_rx) = mpsc::channel::<NotifyCmd>(1024);
     //Communication bridge between stratum and network swarm and swarm commands also, for communicating share population and propogating them further
-    let (swarm_handler, mut swarm_command_receiver) = SwarmHandler::new(Arc::clone(&braid));
+    let (swarm_handler, mut swarm_command_receiver) = SwarmHandler::new(Arc::clone(&braid), db_tx);
     let swarm_handler_arc = Arc::new(Mutex::new(swarm_handler));
     //cloning the channel to be sent across different interfaces
     let notification_tx_clone = notification_tx.clone();
