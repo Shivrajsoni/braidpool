@@ -51,16 +51,23 @@ use tokio::sync::{
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
+    //Initializing loggers and tracers
+    setup_logging();
+    setup_tracing()?;
     let genesis_beads = Vec::from([]);
     // Initializing the braid object with read write lock
     //for supporting concurrent readers and single writer
     let braid: Arc<RwLock<braid::Braid>> = Arc::new(RwLock::new(braid::Braid::new(genesis_beads)));
     //Initializing DB and db command handler
-    let (_db_handler, db_tx) = DBHandler::new(Arc::clone(&braid)).await.unwrap();
+    let (mut _db_handler, db_tx) = DBHandler::new(Arc::clone(&braid)).await.unwrap();
     //Initializing DB
     let latest_template_id = Arc::new(Mutex::new(String::from("genesis")));
     let latest_template_id_for_notifier = latest_template_id.clone();
     let latest_template_id_for_consumer = latest_template_id.clone();
+    //Starting the `query_handler` task
+    tokio::spawn(async move {
+        let _res = _db_handler.insert_query_handler().await;
+    });
     //latest available template to be cached for the newest connection until new job is received
     let latest_template = Arc::new(Mutex::new(BlockTemplate::default()));
     //latest available template merkle branch
@@ -118,8 +125,6 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let main_task_token = CancellationToken::new();
     let ipc_task_token = main_task_token.clone();
     let args = cli::Cli::parse();
-    setup_logging();
-    setup_tracing()?;
     let datadir = shellexpand::full(args.datadir.to_str().unwrap()).unwrap();
     match fs::metadata(&*datadir) {
         Ok(m) => {

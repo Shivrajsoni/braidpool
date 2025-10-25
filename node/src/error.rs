@@ -38,10 +38,18 @@ pub enum DBErrors {
     InsertionTransactionNotCommitted { error: String, query_name: String },
     FetchTransactionNotCommitted { error: String, query_name: String },
     ConnectionToDBNotEstablished { error: String },
+    TransactionNotRolledBack { error: String, query: String },
 }
 impl fmt::Display for DBErrors {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            DBErrors::TransactionNotRolledBack { error, query } => {
+                write!(
+                    f,
+                    "Transaction for the query - {:?} not rolledback due to - {:?}",
+                    query, error
+                )
+            }
             DBErrors::ConnectionToDBNotEstablished { error } => {
                 write!(f, "{:?}", error)
             }

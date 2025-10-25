@@ -1,6 +1,7 @@
 //These implementations must be defined under lib.rs as they are required for intergration tests
 use bitcoin::{
-    consensus::encode::deserialize, ecdsa::Signature, BlockHash, CompactTarget, EcdsaSighashType,
+    consensus::encode::deserialize, ecdsa::Signature, pow::CompactTargetExt, BlockHash,
+    CompactTarget, EcdsaSighashType,
 };
 use num::ToPrimitive;
 use std::{
@@ -271,6 +272,8 @@ impl SwarmHandler {
         downstream_client_ip: &str,
         job_sent_timestamp: u32,
         downstream_payout_addr: &str,
+        //TODO: Will be used as seperate entity after altering `uncommitted_metadata`
+        #[allow(unused)] extranonce_1_raw_value: String,
     ) -> Result<(), StratumErrors> {
         let (candidate_block_header, candidate_block_transactions) = candidate_block.into_parts();
         log::info!("Received command for broadcasting bead via floodsub");
@@ -290,11 +293,14 @@ impl SwarmHandler {
                 .0
                 .push(current_tip_bead.committed_metadata.start_timestamp);
         }
-
+        log::info!(
+            "Current tip indices before new insertion - {:?}",
+            tips_index
+        );
         //TODO:This will be replaced via the allotted `WeakShareDifficulty` after Difficulty adjustment
-        let weak_target = CompactTarget::from_consensus(32);
+        let weak_target = CompactTarget::from_unprefixed_hex("1d00ffff").unwrap();
         //Mindiff
-        let min_target = CompactTarget::from_consensus(1);
+        let min_target = CompactTarget::from_unprefixed_hex("1d00ffff").unwrap();
         //Job sent time before downstream starts mining
         let job_notification_time_val =
             bitcoin::blockdata::locktime::absolute::Time::from_consensus(job_sent_timestamp)

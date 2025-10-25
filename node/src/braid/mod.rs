@@ -7,7 +7,7 @@ use std::collections::VecDeque;
 use std::collections::{HashMap, HashSet};
 #[derive(Clone, Debug, Serialize, PartialEq)]
 
-pub struct Cohort(HashSet<usize>);
+pub struct Cohort(pub HashSet<usize>);
 #[derive(Debug, Clone)]
 pub enum AddBeadStatus {
     DagAlreadyContainsBead,
