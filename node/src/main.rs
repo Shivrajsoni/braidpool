@@ -185,7 +185,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     //spawning the rpc server
     if let Some(rpc_command) = args.command {
         let server_address = tokio::spawn(run_rpc_server(Arc::clone(&braid)));
-        let socket_address = server_address.await.unwrap().unwrap();
+        let socket_address = server_address.await??;
         let _parsing_handle =
             tokio::spawn(parse_arguments(rpc_command, socket_address.clone())).await;
     } else {
@@ -206,8 +206,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let mut swarm = libp2p::SwarmBuilder::with_existing_identity(keypair)
         .with_tokio()
         .with_quic()
-        .with_dns()
-        .unwrap()
+        .with_dns()?
         .with_behaviour(|local_key| BraidPoolBehaviour::new(local_key).unwrap())?
         .with_swarm_config(|cfg| cfg.with_idle_connection_timeout(Duration::from_secs(u64::MAX)))
         .build();
@@ -237,12 +236,12 @@ async fn main() -> Result<(), Box<dyn Error>> {
     swarm.listen_on(multi_addr.clone())?;
     for boot_peer in BOOTNODES {
         swarm.behaviour_mut().kademlia.add_address(
-            &boot_peer.parse::<PeerId>().unwrap(),
-            SEED_DNS.parse::<Multiaddr>().unwrap(),
+            &boot_peer.parse::<PeerId>()?,
+            SEED_DNS.parse::<Multiaddr>()?,
         );
     }
     log::info!("Boot nodes have been added to the node's local DHT");
-    swarm.dial(ADDR_REFRENCE.parse::<Multiaddr>().unwrap())?;
+    swarm.dial(ADDR_REFRENCE.parse::<Multiaddr>()?)?;
     log::info!("Boot Node dialied with listening addr {:?}", ADDR_REFRENCE);
     //IPC(inter process communication) based `getblocktemplate` and `notification` to send to the downstream via the `cmempoold` architecture
     log::info!("Socket path: {}", args.ipc_socket);

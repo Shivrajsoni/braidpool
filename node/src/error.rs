@@ -1,7 +1,13 @@
 //All braidpool specific errors are defined here
-use std::{fmt, path::PathBuf};
+use std::{{
+    fmt, path::PathBuf},
+    num::{IntErrorKind, ParseIntError},
+};
 
-use crate::stratum::{BlockTemplate, JobDetails};
+use crate::{
+    error,
+    stratum::{BlockTemplate, JobDetails},
+};
 use bitcoin::address::ParseError as AddressParseError;
 use tokio::sync::oneshot;
 
@@ -17,10 +23,25 @@ pub enum BraidRPCError {
         method: String,
         source: jsonrpsee::core::ClientError,
     },
+    ClientSpinUpError {
+        error: String,
+    },
+    ServerSpinError {
+        error: String,
+    },
+    UnableToConstructMethodParams {
+        error: String,
+        method: String,
+    },
 }
+impl std::error::Error for BraidRPCError {}
 #[derive(Debug)]
 pub enum IPCtemplateError {
     TemplateConsumeError,
+    ErrorDeserializingTemplate {
+        error: String,
+        value_to_be_deserialized: String,
+    },
 }
 #[derive(Debug, Clone)]
 pub enum BraidpoolError {
@@ -214,11 +235,90 @@ pub enum StratumErrors {
     ErrorFetchingCurrentUNIXTimestamp {
         error: String,
     },
+    ErrorSerializingToStringFromSerdeValue {
+        error: String,
+    },
+    ErrorUnwrappingStringSlice {
+        error: String,
+    },
+    StratumHexDecodeError {
+        error: String,
+        value_to_be_decoded: String,
+        method: String,
+    },
+    ParseDatatypeError {
+        datatype: IntErrorKind,
+        error: String,
+    },
+    ParseValueError {
+        error: String,
+        value_to_be_parsed: String,
+        method: String,
+    },
+    WitnessCommittmentNotFound {},
+    CoinbaseNotReceived {},
+}
+impl std::error::Error for StratumErrors {}
+impl From<serde_json::Error> for StratumErrors {
+    fn from(value: serde_json::Error) -> Self {
+        StratumErrors::ErrorSerializingToStringFromSerdeValue {
+            error: value.to_string(),
+        }
+    }
+}
+impl From<ParseIntError> for StratumErrors {
+    fn from(value: ParseIntError) -> Self {
+        StratumErrors::ParseDatatypeError {
+            datatype: *value.kind(),
+            error: value.to_string(),
+        }
+    }
 }
 pub enum StratumResponseErrors {}
 impl fmt::Display for StratumErrors {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            StratumErrors::ParseValueError {
+                error,
+                value_to_be_parsed,
+                method,
+            } => {
+                write!(
+                    f,
+                    "An error occurred while parsing {:?} due to - {:?} in the method - {:?}",
+                    value_to_be_parsed, error, method
+                )
+            }
+            StratumErrors::CoinbaseNotReceived {} => {
+                write!(f, "Coinbase tx not provided in the received template")
+            }
+            StratumErrors::WitnessCommittmentNotFound {} => {
+                write!(f,"Witness committment not found while reconstructing coinbase during block reconstruction")
+            }
+            StratumErrors::ParseDatatypeError { datatype, error } => {
+                write!(
+                    f,
+                    "{:?} occurred while parsing datatype of kind - {:?}",
+                    error, datatype
+                )
+            }
+            StratumErrors::StratumHexDecodeError {
+                error,
+                value_to_be_decoded,
+                method,
+            } => {
+                write!(
+                    f,
+                    "Error occurred while decoding {:?} - {:?} in method - {:?}",
+                    value_to_be_decoded, error, method
+                )
+            }
+            StratumErrors::ErrorUnwrappingStringSlice { error } => {
+                write!(f, "{:?}", error)
+            }
+            StratumErrors::ErrorSerializingToStringFromSerdeValue { error } => {
+                write!(f, "{:?}", error)
+            }
             StratumErrors::ErrorFetchingCurrentUNIXTimestamp { error } => {
                 write!(
                     f,
@@ -418,6 +518,23 @@ impl fmt::Display for BraidpoolError {
 impl fmt::Display for BraidRPCError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            BraidRPCError::UnableToConstructMethodParams { error, method } => {
+                write!(f,"An error {:?} occurred while constructing method param for the given RPC method - {:?}",error,method)
+            }
+            BraidRPCError::ServerSpinError { error } => {
+                write!(
+                    f,
+                    "An error occurred while spinning up RPC server thus server not started- {:?}",
+                    error.to_string()
+                )
+            }
+            BraidRPCError::ClientSpinUpError { error } => {
+                write!(
+                    f,
+                    "An error occurred while spinning up RPC server - {:?}",
+                    error
+                )
+            }
             BraidRPCError::RequestFailed { method, source } => {
                 write!(
                     f,
@@ -441,6 +558,16 @@ impl fmt::Display for BraidError {
 impl fmt::Display for IPCtemplateError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            IPCtemplateError::ErrorDeserializingTemplate {
+                error,
+                value_to_be_deserialized,
+            } => {
+                write!(
+                    f,
+                    "An error occurred while deserializing {:?} due to - {:?}",
+                    value_to_be_deserialized, error
+                )
+            }
             IPCtemplateError::TemplateConsumeError => {
                 write!(f, "An error occurred while consuming the template")
             }

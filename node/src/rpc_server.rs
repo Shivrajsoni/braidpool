@@ -22,7 +22,9 @@ use jsonrpsee::ConnectionId;
 use log;
 use serde_json;
 use std::future::Future;
+use std::net::Ipv4Addr;
 use std::net::SocketAddr;
+use std::net::SocketAddrV4;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
@@ -51,24 +53,50 @@ pub enum RpcCommand {
     GetTips,
 }
 //parsing the inital rpc command line all
-pub async fn parse_arguments(cli_command: RpcCommand, server_addr: SocketAddr) -> () {
+pub async fn parse_arguments(
+    cli_command: RpcCommand,
+    server_addr: SocketAddr,
+) -> Result<(), BraidRPCError> {
     // //initializing a client associated with the current node
     // //for receving the response from the server
     let target_uri = format!("http://{}", server_addr.to_string());
-    let client_res: HttpClient = HttpClient::builder().build(target_uri).unwrap();
+    let client_res: HttpClient = match HttpClient::builder().build(target_uri) {
+        Ok(client) => client,
+        Err(error) => {
+            return Err(BraidRPCError::ClientSpinUpError {
+                error: error.to_string(),
+            });
+        }
+    };
 
     let (rpc_method, method_params) = match cli_command {
         RpcCommand::AddBead { bead_data } => {
             let rpc_method = String::from("addbead");
             let mut method_params = ArrayParams::new();
-            method_params.insert(bead_data).unwrap();
+            match method_params.insert(bead_data) {
+                Ok(_) => {}
+                Err(error) => {
+                    return Err(BraidRPCError::UnableToConstructMethodParams {
+                        error: error.to_string(),
+                        method: "AddBead".to_string(),
+                    });
+                }
+            };
 
             (rpc_method, method_params)
         }
         RpcCommand::GetBead { bead_hash } => {
             let rpc_method = "getbead".to_string();
             let mut method_params = ArrayParams::new();
-            method_params.insert(bead_hash).unwrap();
+            match method_params.insert(bead_hash) {
+                Ok(_) => {}
+                Err(error) => {
+                    return Err(BraidRPCError::UnableToConstructMethodParams {
+                        error: error.to_string(),
+                        method: "GetBead".to_string(),
+                    });
+                }
+            };
 
             (rpc_method, method_params)
         }
@@ -96,6 +124,7 @@ pub async fn parse_arguments(cli_command: RpcCommand, server_addr: SocketAddr) -
         method_params,
         client_res,
     ));
+    Ok(())
 }
 
 //handling the request arising either from command line cli or from the external users
@@ -177,9 +206,14 @@ impl RpcServer for RpcServerImpl {
 
         match bead {
             Some(bead) => {
-                let json = serde_json::to_string(&bead)
+                let json = match serde_json::to_string(&bead)
                     .map_err(|_| ErrorObjectOwned::owned(2, "Internal error", None::<()>))
-                    .unwrap();
+                {
+                    Ok(str) => str,
+                    Err(error) => {
+                        return Err(error);
+                    }
+                };
                 Ok(json)
             }
             None => Err(ErrorObjectOwned::owned(3, "Bead not found", None::<()>)),
@@ -270,18 +304,29 @@ where
 }
 //server building
 //running a server in seperate spawn event
-pub async fn run_rpc_server(braid_shared_pointer: Arc<RwLock<Braid>>) -> Result<SocketAddr, ()> {
+pub async fn run_rpc_server(
+    braid_shared_pointer: Arc<RwLock<Braid>>,
+) -> Result<SocketAddr, BraidRPCError> {
     //Initializing the middleware
     let rpc_middleware =
         jsonrpsee::server::middleware::rpc::RpcServiceBuilder::new().layer_fn(LoggingMiddleware);
     //building the context/server supporting the http transport and ws
-    let server = jsonrpsee::server::Server::builder()
+    let server = match jsonrpsee::server::Server::builder()
         .set_rpc_middleware(rpc_middleware)
         .build("127.0.0.1:6682")
         .await
-        .unwrap();
+    {
+        Ok(server) => server,
+        Err(error) => {
+            return Err(BraidRPCError::ServerSpinError {
+                error: error.to_string(),
+            });
+        }
+    };
     //listening address for incoming requests/connection
-    let addr = server.local_addr().unwrap();
+    let addr = server
+        .local_addr()
+        .unwrap_or(SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::LOCALHOST, 6682)));
     //context for the served server
     let rpc_impl = RpcServerImpl::new(braid_shared_pointer);
     let handle = server.start(rpc_impl.into_rpc());

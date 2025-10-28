@@ -283,9 +283,18 @@ impl SwarmHandler {
         let transaction_ids: Vec<Txid> = Vec::from(ids);
         log::info!("Received command for broadcasting bead via floodsub");
         //TODO:Currently temprorary placeholder will be replaced in upcoming PRs
-        let public_key = "020202020202020202020202020202020202020202020202020202020202020202"
+        let public_key = match "020202020202020202020202020202020202020202020202020202020202020202"
             .parse::<bitcoin::PublicKey>()
-            .unwrap();
+        {
+            Ok(key) => key,
+            Err(error) => {
+                return Err(StratumErrors::ParseValueError {
+                    error: error.to_string(),
+                    value_to_be_parsed: "Public key".to_string(),
+                    method: "propagate_valid_bead".to_string(),
+                });
+            }
+        };
         let mut time_hash_set = TimeVec(Vec::new());
         let mut parent_hash_set: HashSet<BlockHash> = HashSet::new();
         let mut braid_data = self.braid_arc.write().await;
@@ -308,8 +317,16 @@ impl SwarmHandler {
         let min_target = CompactTarget::from_unprefixed_hex("1d00ffff").unwrap();
         //Job sent time before downstream starts mining
         let job_notification_time_val =
-            bitcoin::blockdata::locktime::absolute::Time::from_consensus(job_sent_timestamp)
-                .unwrap();
+            match bitcoin::blockdata::locktime::absolute::Time::from_consensus(job_sent_timestamp) {
+                Ok(time) => time,
+                Err(error) => {
+                    return Err(StratumErrors::ParseValueError {
+                        error: error.to_string(),
+                        value_to_be_parsed: "Ntime".to_string(),
+                        method: "propagate_valid_bead".to_string(),
+                    });
+                }
+            };
         let candidate_block_bead_committed_metadata = CommittedMetadata {
             comm_pub_key: public_key,
             transaction_ids: TxIdVec(transaction_ids),
@@ -324,7 +341,16 @@ impl SwarmHandler {
         //TODO:This will be either be generated via the `Pubkey` from config parameter from `~/.braidpool`
         let hex = "3046022100839c1fbc5304de944f697c9f4b1d01d1faeba32d751c0f7acb21ac8a0f436a72022100e89bd46bb3a5a62adc679f659b7ce876d83ee297c7a5587b2011c4fcc72eab45";
         let sig = Signature {
-            signature: secp256k1::ecdsa::Signature::from_str(hex).unwrap(),
+            signature: match secp256k1::ecdsa::Signature::from_str(hex) {
+                Ok(sig) => sig,
+                Err(error) => {
+                    return Err(StratumErrors::StratumHexDecodeError {
+                        error: error.to_string(),
+                        value_to_be_decoded: "Signature".to_string(),
+                        method: "propogate_valid_bead".to_string(),
+                    });
+                }
+            },
             sighash_type: EcdsaSighashType::All,
         };
         //Current UNIX timestamp during broadcast of bead
@@ -338,13 +364,32 @@ impl SwarmHandler {
             }
         };
 
-        let unix_timestamp = duration_since_epoch.as_secs().to_u32().unwrap();
+        let unix_timestamp = match duration_since_epoch.as_secs().to_u32() {
+            Some(timestamp) => timestamp,
+            None => {
+                return Err(StratumErrors::ParseValueError {
+                    error: "Could not parse current unix timestamp therefore fetched bead not propagated".to_string(),
+                    value_to_be_parsed: "unix_timestamp".to_string(),
+                    method: "propagate_valid_bead".to_string(),
+                });
+            }
+        };
 
         let candidate_block_bead_uncommitted_metadata = UnCommittedMetadata {
-            broadcast_timestamp: bitcoin::blockdata::locktime::absolute::MedianTimePast::from_u32(
-                unix_timestamp,
-            )
-            .unwrap(),
+            broadcast_timestamp:
+                match bitcoin::blockdata::locktime::absolute::MedianTimePast::from_u32(
+                    unix_timestamp,
+                ) {
+                    Ok(timestamp) => timestamp,
+                    Err(error) => {
+                        return Err(StratumErrors::ParseValueError {
+                            error: error.to_string(),
+                            value_to_be_parsed: "committed_metadata broadcast_timestamp"
+                                .to_string(),
+                            method: "propagate_valid_bead".to_string(),
+                        });
+                    }
+                },
             extra_nonce_1: extranonce_1_raw_value,
             extra_nonce_2: extranonce_2_raw_value,
             signature: sig,
