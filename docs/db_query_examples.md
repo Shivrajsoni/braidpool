@@ -267,3 +267,48 @@ WHERE b.broadcast_timestamp < :cutoff_time
   AND pt.parent IS NULL
   AND EXISTS (SELECT 1 FROM Relatives r WHERE r.parent = b.id);
 ```
+
+### 24. **Insert a bead and all dependent rows atomically**
+
+```sql
+BEGIN IMMEDIATE;
+
+INSERT INTO Bead (
+    hash, nVersion, hashPrevBlock, hashMerkleRoot, nTime,
+    nBits, nNonce, payout_address, start_timestamp, comm_pub_key,
+    min_target, weak_target, miner_ip, extra_nonce,
+    broadcast_timestamp, signature
+) VALUES (
+    :hash,
+    :n_version,
+    :hash_prev_block,
+    :hash_merkle_root,
+    :n_time,
+    :n_bits,
+    :n_nonce,
+    :payout_address,
+    :start_timestamp,
+    :comm_pub_key,
+    :min_target,
+    :weak_target,
+    :miner_ip,
+    :extra_nonce,
+    :broadcast_timestamp,
+    :signature
+);
+
+INSERT INTO Transactions (bead_id, txid)
+SELECT last_insert_rowid(), txid
+FROM (VALUES {transaction_values}) AS t(txid)
+WHERE txid IS NOT NULL;
+
+INSERT INTO Relatives (child, parent)
+VALUES {relatives_values};
+
+INSERT INTO ParentTimestamps (parent, child, timestamp)
+VALUES {parent_timestamps_values};
+
+COMMIT;
+```
+
+`{transaction_values}` should expand to a comma-separated list of single-column tuples such as `('txid1'),('txid2')`. When a bead has no transactions, provide a single sentinel tuple `(NULL)` so the `VALUES` clause is valid; the `WHERE txid IS NOT NULL` filter skips that dummy row. Relatives and ParentTimestamps logically cannot be empty (the bead is consensus-invalid) so `{relatives_values}` and `{parent_timestamps_values}` must expand to non-empty tuples for their respective columns. Because every statement is executed between `BEGIN IMMEDIATE` and `COMMIT`, any error in a child insert triggers an automatic rollback of the entire batch.
