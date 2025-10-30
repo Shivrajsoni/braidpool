@@ -1,21 +1,18 @@
 use crate::error::StratumErrors;
 use crate::template_creator::calculate_merkle_root;
-use crate::{EXTRANONCE1_SIZE, EXTRANONCE2_SIZE, EXTRANONCE_SEPARATOR};
+use crate::{SwarmHandler, EXTRANONCE1_SIZE, EXTRANONCE2_SIZE, EXTRANONCE_SEPARATOR};
 use bitcoin::block::HeaderExt;
 use bitcoin::consensus::serialize;
 use bitcoin::io::Cursor;
-use bitcoin::{
-    absolute::{Decodable, Encodable},
-    io::{self, Write},
-    Transaction,
-};
-use bitcoin::{BlockHeader, BlockTime, TxMerkleNode, Txid, Witness};
+use bitcoin::{absolute::Decodable, Transaction};
+use bitcoin::{BlockHash, BlockHeader, BlockTime, TxMerkleNode, Txid, Witness};
 use core::panic;
 use futures::{lock::Mutex, FutureExt};
+use num::ToPrimitive;
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use std::str::FromStr;
+use std::time::UNIX_EPOCH;
 use std::{collections::HashMap, net::SocketAddr, sync::Arc};
 use tokio::{
     io::{AsyncWriteExt, BufReader},
@@ -49,155 +46,49 @@ node . Which further can be accessed by all the downstream nodes for methods suc
 /// various consensus limits.
 #[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct BlockTemplate {
-    pub version: i32,
+    pub version: bitcoin::block::Version,
     pub rules: Option<Vec<String>>,
     pub vbavailable: Option<Vec<(String, i32)>>,
     pub vbrequired: Option<u32>,
-    pub previousblockhash: String,
+    pub previousblockhash: BlockHash,
     pub transactions: Vec<Transaction>,
     pub coinbaseaux: Option<Vec<(String, String)>>,
     pub coinbasevalue: Option<u64>,
     pub longpollid: Option<String>,
-    pub target: String,
-    pub mintime: Option<u32>,
+    pub target: bitcoin::Target,
+    pub mintime: Option<bitcoin::time::BlockTime>,
     pub mutable: Option<Vec<String>>,
     pub noncerange: Option<String>,
     pub sigoplimit: Option<u32>,
-    pub sizelimit: Option<u32>,
-    pub weightlimit: Option<u32>,
-    pub curtime: u32,
+    pub sizelimit: Option<usize>,
+    pub weightlimit: Option<bitcoin::blockdata::Weight>,
+    pub curtime: bitcoin::time::BlockTime,
     pub bits: bitcoin::CompactTarget,
-    pub height: u32,
-    pub default_witness_commitment: Option<String>,
-}
-impl Encodable for BlockTemplate {
-    fn consensus_encode<W: Write + ?Sized>(&self, writer: &mut W) -> Result<usize, io::Error> {
-        let mut len = 0;
-
-        len += self.version.consensus_encode(writer).unwrap();
-
-        if let Some(rules) = &self.rules {
-            len += (rules.len() as u64).consensus_encode(writer).unwrap();
-            for rule in rules {
-                len += rule.consensus_encode(writer).unwrap();
-            }
-        } else {
-            len += 0u64.consensus_encode(writer).unwrap();
-        }
-
-        if let Some(version_bits_available) = &self.vbavailable {
-            len += (version_bits_available.len() as u64)
-                .consensus_encode(writer)
-                .unwrap();
-            for (key, value) in version_bits_available {
-                len += key.consensus_encode(writer).unwrap();
-                len += value.consensus_encode(writer).unwrap();
-            }
-        } else {
-            len += 0u64.consensus_encode(writer).unwrap();
-        }
-
-        if let Some(version_bits_required) = self.vbrequired {
-            len += version_bits_required.consensus_encode(writer).unwrap();
-        }
-
-        len += self.previousblockhash.consensus_encode(writer).unwrap();
-
-        len += (self.transactions.len() as u64)
-            .consensus_encode(writer)
-            .unwrap();
-        for transaction in &self.transactions {
-            len += transaction.consensus_encode(writer).unwrap();
-        }
-
-        if let Some(coinbase_auxiliary) = &self.coinbaseaux {
-            len += (coinbase_auxiliary.len() as u64)
-                .consensus_encode(writer)
-                .unwrap();
-            for (key, value) in coinbase_auxiliary {
-                len += key.consensus_encode(writer).unwrap();
-                len += value.consensus_encode(writer).unwrap();
-            }
-        } else {
-            len += 0u64.consensus_encode(writer).unwrap();
-        }
-
-        if let Some(coinbase_value) = self.coinbasevalue {
-            len += coinbase_value.consensus_encode(writer).unwrap();
-        }
-
-        if let Some(long_poll_id) = &self.longpollid {
-            len += long_poll_id.consensus_encode(writer).unwrap();
-        }
-
-        len += self.target.consensus_encode(writer).unwrap();
-
-        if let Some(minimum_time) = self.mintime {
-            len += minimum_time.consensus_encode(writer).unwrap();
-        }
-
-        if let Some(mutable_fields) = &self.mutable {
-            len += (mutable_fields.len() as u64)
-                .consensus_encode(writer)
-                .unwrap();
-            for mutable_entry in mutable_fields {
-                len += mutable_entry.consensus_encode(writer).unwrap();
-            }
-        } else {
-            len += 0u64.consensus_encode(writer).unwrap();
-        }
-
-        if let Some(nonce_range) = &self.noncerange {
-            len += nonce_range.consensus_encode(writer).unwrap();
-        }
-
-        if let Some(signature_operation_limit) = self.sigoplimit {
-            len += signature_operation_limit.consensus_encode(writer).unwrap();
-        }
-
-        if let Some(size_limit) = self.sizelimit {
-            len += size_limit.consensus_encode(writer).unwrap();
-        }
-
-        if let Some(weight_limit) = self.weightlimit {
-            len += weight_limit.consensus_encode(writer).unwrap();
-        }
-
-        len += self.curtime.consensus_encode(writer).unwrap();
-        len += self.bits.consensus_encode(writer).unwrap();
-        len += self.height.consensus_encode(writer).unwrap();
-
-        if self.default_witness_commitment.is_none() == false {
-            for witness_commitmment in self.default_witness_commitment.clone() {
-                len += witness_commitmment.consensus_encode(writer)?;
-            }
-        }
-        log::info!("LENGTH DURING SERIALIZATION - {:?}", len);
-        Ok(len)
-    }
+    pub height: bitcoin::absolute::Height,
+    pub default_witness_commitment: Option<Witness>,
 }
 impl Default for BlockTemplate {
     fn default() -> Self {
         Self {
-            version: 0,
+            version: bitcoin::block::Version::TWO,
             rules: None,
             vbavailable: None,
             vbrequired: None,
-            previousblockhash: String::new(),
+            previousblockhash: BlockHash::GENESIS_PREVIOUS_BLOCK_HASH,
             transactions: Vec::new(),
             coinbaseaux: None,
             coinbasevalue: None,
             longpollid: None,
-            target: String::new(),
+            target: bitcoin::Target::MAX,
             mintime: None,
             mutable: None,
             noncerange: None,
             sigoplimit: None,
             sizelimit: None,
             weightlimit: None,
-            curtime: 0,
+            curtime: bitcoin::BlockTime::from_u32(1759998900),
             bits: bitcoin::CompactTarget::from_consensus(0),
-            height: 0,
+            height: bitcoin::absolute::Height::ZERO,
             default_witness_commitment: None,
         }
     }
@@ -298,7 +189,7 @@ pub struct DownstreamClient {
     pub authorized: bool,
     ///Downstream miner IP
     pub downstream_ip: String,
-    /// Did the mine subscribe already?
+    /// Did the mine subscribe already
     pub subscribed: bool,
     ///Diffculty suggested or not
     pub suggest_difficulty_done: bool,
@@ -345,6 +236,7 @@ impl DownstreamClient {
         response_message_sender: mpsc::Sender<String>,
         notification_sender: mpsc::Sender<NotifyCmd>,
         peer_addr: String,
+        swarm_handler: Arc<Mutex<SwarmHandler>>,
     ) -> Result<StratumResponses, StratumErrors> {
         let req_params = client_request.params;
         let method = client_request.method.clone();
@@ -356,7 +248,14 @@ impl DownstreamClient {
             }
             "mining.authorize" => self.handle_authorize(&req_params, client_request_id).await,
             "mining.submit" => {
-                Self::handle_submit(self, &req_params, mining_job_map, client_request_id).await
+                Self::handle_submit(
+                    self,
+                    &req_params,
+                    mining_job_map,
+                    client_request_id,
+                    swarm_handler,
+                )
+                .await
             }
             "mining.suggest_difficulty" => self.suggest_difficulty(&req_params).await,
             method => Err(StratumErrors::InvalidMethod {
@@ -393,8 +292,9 @@ impl DownstreamClient {
                 //downstream connection
                 if self.authorized == true
                     && self.subscribed == true
-                    && self.channel_configured == true
-                    && self.suggest_difficulty_done == true
+                    //TODO:Updating our rust_cpuminer according to these 
+                    // && self.channel_configured == true
+                    // && self.suggest_difficulty_done == true
                     && method != "mining.submit"
                 {
                     let notification_sent_res = notification_sender
@@ -448,6 +348,7 @@ impl DownstreamClient {
         submit_work_params: &Value,
         mining_job_map: Arc<Mutex<MiningJobMap>>,
         client_request_id: u64,
+        swarm_handler: Arc<Mutex<SwarmHandler>>,
     ) -> Result<StratumResponses, StratumErrors> {
         let param_array = match submit_work_params.as_array() {
             Some(param_array) => param_array,
@@ -571,8 +472,10 @@ impl DownstreamClient {
 
         //Applying version mask received during mining.configure
         // Job version
-        let header_version = submitted_job.blocktemplate.version.clone();
-        let mut final_masked_version = submitted_job.blocktemplate.version;
+        let header_version =
+            bitcoin::block::Version::to_consensus(submitted_job.blocktemplate.version.clone());
+        let mut final_masked_version =
+            bitcoin::block::Version::to_consensus(submitted_job.blocktemplate.version);
         if param_array.len() >= 6 {
             //rolling the version bits only if they have been supplied during the configuration phase
             let rolled_version_bits: &str = match param_array.get(5).and_then(|v| v.as_str()) {
@@ -612,7 +515,7 @@ impl DownstreamClient {
             let version_rolling_mask_bytes = version_rolling_mask.to_be_bytes();
             let version_rolling_mask_hex = hex::encode(version_rolling_mask_bytes);
 
-            log::info!("CONVERTED VERSION MASK --- {:?}", version_rolling_mask_hex);
+            log::info!("Converted version mask --- {:?}", version_rolling_mask_hex);
 
             match hex::decode_to_slice(version_rolling_mask_hex, &mut mask_bytes) {
                 Ok(_) => (),
@@ -637,10 +540,7 @@ impl DownstreamClient {
         //Computing the block header
         let header = BlockHeader {
             version: bitcoin::blockdata::block::Version::from_consensus(final_masked_version),
-            prev_blockhash: bitcoin::BlockHash::from_str(
-                &submitted_job.blocktemplate.previousblockhash,
-            )
-            .unwrap(),
+            prev_blockhash: submitted_job.blocktemplate.previousblockhash,
             merkle_root: merkle_root,
             time: BlockTime::from_u32(u32::from_str_radix(ntime, 16).unwrap()),
             bits: submitted_job.blocktemplate.bits,
@@ -710,7 +610,27 @@ impl DownstreamClient {
                 });
             }
         }
-
+        let extranonce_2_raw_value = i32::from_str_radix(extranonce2, 16).unwrap();
+        let swarm_command_sent = match swarm_handler
+            .lock()
+            .await
+            .propagate_valid_bead(
+                complete_block,
+                extranonce_2_raw_value,
+                &self.downstream_ip,
+                submitted_job.job_sent_time,
+                worker_name,
+            )
+            .await
+        {
+            Ok(_) => {
+                log::info!("Candidate block sent successfully");
+                Ok(StratumResponses::StandardResponse {
+                    std_response: StandardResponse::new_ok(Some(client_request_id), json!(true)),
+                })
+            }
+            Err(error) => Err(error),
+        };
         Ok(StratumResponses::StandardResponse {
             std_response: StandardResponse::new_ok(Some(client_request_id), json!(true)),
         })
@@ -1070,6 +990,8 @@ pub struct JobDetails {
     pub coinbase2: String,
     pub coinbase_merkel_path: Vec<String>,
     pub coinbase_witness_commitment: Option<Witness>,
+    //Unix timestamp at which current job was sent to downstream miner
+    pub job_sent_time: u32,
 }
 ///Struct storing all the jobs mapped accroding to the job id
 /// it will serve the purpose for maintaining the details received from the downstream as well as other
@@ -1170,7 +1092,7 @@ impl Notifier {
     ///
     /// **Generation transaction (part 1)**. The miner inserts ExtraNonce1 and ExtraNonce2 after this section of the transaction data.
     ///
-    /// **Generation transaction (part 2)**. The miner appends this after the first part of the transaction data and the two ExtraNonce values.
+    /// **Generation transaction (part 2)**. The mine10-3-2025-Forwarding-shares-to-peersr appends this after the first part of the transaction data and the two ExtraNonce values.
     ///
     /// **List of merkle branches**. The generation transaction is hashed against the merkle branches to build the final merkle root.
     ///
@@ -1209,7 +1131,7 @@ impl Notifier {
             deserialized_coinbase.len(),
             coinbase_transaction
         );
-        //For splitting of the coinbase we check for the extranonce_seperator we had inserted while resonstructing the coinbase during the
+        //For splitting of the coinbase we check for the extranonce_seperator we had inserted while reconstructing the coinbase during the
         //fetching of the template via IPC .
         let separator_pos = match deserialized_coinbase
             .as_slice()
@@ -1244,8 +1166,9 @@ impl Notifier {
         );
         //Stratum accepts the prev block hash to be in little endian instead of big endian
         //therefore byte by byte reversal is required here .
-        let mut prev_block_hash = notified_template.previousblockhash.as_str();
-        let prev_block_hash_little_endian = match reverse_four_byte_chunks(prev_block_hash) {
+        let prev_block_hash = notified_template.previousblockhash.to_string();
+        let prev_block_hash_little_endian = match reverse_four_byte_chunks(prev_block_hash.as_str())
+        {
             Ok(reversed_hash) => reversed_hash,
             Err(error) => {
                 return Err(error);
@@ -1255,9 +1178,9 @@ impl Notifier {
             "Converting the prev block hash to little endian done -- {:?}",
             prev_block_hash_little_endian
         );
-        let bitcoin_block_version = notified_template.version;
+        let bitcoin_block_version = notified_template.version.to_consensus();
         let bits = notified_template.bits;
-        let time = notified_template.curtime;
+        let time = notified_template.curtime.to_u32();
         //Adding support for segwit coinbase
         Ok(JobNotification {
             job_id: new_job_id.to_string(),
@@ -1324,6 +1247,18 @@ impl Notifier {
                             merkle_branch_coinbase.clone(),
                         )
                         .await;
+                        let current_system_time = std::time::SystemTime::now();
+                        let duration_since_epoch =
+                            match current_system_time.duration_since(UNIX_EPOCH) {
+                                Ok(duration) => duration,
+                                Err(error) => {
+                                    return Err(StratumErrors::ErrorFetchingCurrentUNIXTimestamp {
+                                        error: error.to_string(),
+                                    })
+                                }
+                            };
+
+                        let unix_timestamp = duration_since_epoch.as_secs().to_u32().unwrap();
                         let serialized_notification: Result<String, StratumErrors> =
                             match job_notification {
                                 Ok(job) => {
@@ -1342,6 +1277,7 @@ impl Notifier {
                                         coinbase_merkel_path: job.merkle_branches.clone(),
                                         coinbase_witness_commitment: job
                                             .coinbase_witness_commitment,
+                                        job_sent_time: unix_timestamp,
                                     };
                                     curr_peer_mining_job_map
                                         .insert_mining_job(job_details)
@@ -1438,6 +1374,18 @@ impl Notifier {
                         latest_template_merkle_branch,
                     )
                     .await;
+                    let current_system_time = std::time::SystemTime::now();
+                    let duration_since_epoch = match current_system_time.duration_since(UNIX_EPOCH)
+                    {
+                        Ok(duration) => duration,
+                        Err(error) => {
+                            return Err(StratumErrors::ErrorFetchingCurrentUNIXTimestamp {
+                                error: error.to_string(),
+                            })
+                        }
+                    };
+
+                    let unix_timestamp = duration_since_epoch.as_secs().to_u32().unwrap();
                     let serialized_notification: Result<String, StratumErrors> =
                         match job_notification {
                             Ok(job) => {
@@ -1456,6 +1404,7 @@ impl Notifier {
                                     coinbase2: job.coinbase2.clone(),
                                     coinbase_merkel_path: job.merkle_branches.clone(),
                                     coinbase_witness_commitment: job.coinbase_witness_commitment,
+                                    job_sent_time: unix_timestamp,
                                 };
                                 curr_peer_mining_job_map
                                     .insert_mining_job(job_details)
@@ -1555,6 +1504,7 @@ impl Server {
         &mut self,
         mining_job_map: Arc<Mutex<HashMap<String, Arc<Mutex<MiningJobMap>>>>>,
         notification_sender: mpsc::Sender<NotifyCmd>,
+        swarm_handler: Arc<Mutex<SwarmHandler>>,
     ) -> Result<(), Box<std::io::Error>> {
         log::info!("Server is being started");
         let bind_address = format!(
@@ -1581,6 +1531,8 @@ impl Server {
                             let (reader, writer) = stream.into_split();
                             //Notification sender to the `Notifier` task
                             let notification_sender = notification_sender.clone();
+                            //Communication bridge between swarm and stratum service
+                            let swarm_handler_arc_ref = Arc::clone(&swarm_handler);
                             //Adding the downstream mining map to global mapper
                             mining_job_map.lock().await.insert(peer_addr.to_string(), self_mining_map.clone());
                             //downstream channel for server2client communication to take place
@@ -1591,7 +1543,7 @@ impl Server {
                             self_.lock().await.downstream_ip = peer_addr.to_string();
                             //catering each new connection as seperate process
                              tokio::spawn(async move{
-                              let _=  Self::handle_connection(self_.clone(),peer_addr,reader,writer,&mut downstream_rx,self_mining_map.clone(),downstream_tx,notification_sender).await;
+                              let _=  Self::handle_connection(self_.clone(),peer_addr,reader,writer,&mut downstream_rx,self_mining_map.clone(),downstream_tx,notification_sender,swarm_handler_arc_ref).await;
                              });
                         }
                         Err(error)=>{
@@ -1629,6 +1581,7 @@ impl Server {
         mining_job_map: Arc<Mutex<MiningJobMap>>,
         downstream_message_sender: mpsc::Sender<String>,
         notification_sender: mpsc::Sender<NotifyCmd>,
+        swarm_handler: Arc<Mutex<SwarmHandler>>,
     ) -> Result<(), Box<StratumErrors>> {
         const MAX_LINE_LENGTH: usize = 2_usize.pow(16);
         //It can be excessively inefficient to work directly with a AsyncRead instance. A BufReader performs large, infrequent reads on the underlying AsyncRead and maintains an in-memory buffer of the results.
@@ -1664,7 +1617,7 @@ impl Server {
                         //stratum or not .
                         match serde_json::from_str::<StandardRequest>(&line) {
                                 Ok(request) => {
-                         let server_request_res:Result<StratumResponses, StratumErrors> = downstream_client.lock().await.handle_client_to_server_request(serde_json::from_str(&line).unwrap(),mining_job_map.clone(),downstream_message_sender.clone(),notification_sender.clone(),peer_addr.to_string()).await;
+                         let server_request_res:Result<StratumResponses, StratumErrors> = downstream_client.lock().await.handle_client_to_server_request(serde_json::from_str(&line).unwrap(),mining_job_map.clone(),downstream_message_sender.clone(),notification_sender.clone(),peer_addr.to_string(),swarm_handler.clone()).await;
                          match server_request_res{
                             Ok(_)=>{
 
@@ -1702,7 +1655,7 @@ impl Server {
 #[cfg(test)]
 //Unit tests specific to stratum service
 mod test {
-    use std::{collections::HashMap, sync::Arc, time::Duration};
+    use std::{collections::HashMap, str::FromStr, sync::Arc, time::Duration};
 
     use super::*;
     use crate::stratum::{ConnectionMapping, MiningJobMap, NotifyCmd, Server, StratumServerConfig};
@@ -1722,7 +1675,8 @@ mod test {
         let connection_mapping = Arc::new(Mutex::new(ConnectionMapping::new()));
         let mining_job_map = Arc::new(Mutex::new(std::collections::HashMap::new()));
         let notify_tx = mpsc::channel::<NotifyCmd>(32).0;
-
+        let (swarm_handler, mut swarm_command_receiver) = SwarmHandler::new();
+        let swarm_handler_arc = Arc::new(Mutex::new(swarm_handler));
         let config = StratumServerConfig {
             hostname: "127.0.0.1".to_string(),
             port: 3353,
@@ -1732,7 +1686,9 @@ mod test {
         let mut server = Server::new(config.clone(), connection_mapping.clone());
 
         let server_task = tokio::spawn(async move {
-            let _ = server.run_stratum_service(mining_job_map, notify_tx).await;
+            let _ = server
+                .run_stratum_service(mining_job_map, notify_tx, swarm_handler_arc)
+                .await;
         });
 
         tokio::time::sleep(Duration::from_millis(300)).await;
@@ -1771,6 +1727,8 @@ mod test {
     pub async fn server_subscribe_response() {
         let connection_mapping = Arc::new(Mutex::new(ConnectionMapping::new()));
         let mining_job_map = Arc::new(Mutex::new(std::collections::HashMap::new()));
+        let (swarm_handler, mut swarm_command_receiver) = SwarmHandler::new();
+        let swarm_handler_arc = Arc::new(Mutex::new(swarm_handler));
         let notify_tx = mpsc::channel::<NotifyCmd>(32).0;
 
         let config = StratumServerConfig {
@@ -1782,7 +1740,9 @@ mod test {
         let mut server = Server::new(config.clone(), connection_mapping.clone());
 
         let server_task = tokio::spawn(async move {
-            let _ = server.run_stratum_service(mining_job_map, notify_tx).await;
+            let _ = server
+                .run_stratum_service(mining_job_map, notify_tx, swarm_handler_arc)
+                .await;
         });
 
         tokio::time::sleep(Duration::from_millis(300)).await;
@@ -1806,7 +1766,8 @@ mod test {
         let connection_mapping = Arc::new(Mutex::new(ConnectionMapping::new()));
         let mining_job_map = Arc::new(Mutex::new(std::collections::HashMap::new()));
         let notify_tx = mpsc::channel::<NotifyCmd>(32).0;
-
+        let (swarm_handler, mut swarm_command_receiver) = SwarmHandler::new();
+        let swarm_handler_arc = Arc::new(Mutex::new(swarm_handler));
         let config = StratumServerConfig {
             hostname: "127.0.0.1".to_string(),
             port: 3357,
@@ -1816,7 +1777,9 @@ mod test {
         let port = config.port;
         let mut server = Server::new(config, connection_mapping);
         tokio::spawn(async move {
-            let _ = server.run_stratum_service(mining_job_map, notify_tx).await;
+            let _ = server
+                .run_stratum_service(mining_job_map, notify_tx, swarm_handler_arc)
+                .await;
         });
 
         tokio::time::sleep(Duration::from_millis(300)).await;
@@ -1842,7 +1805,8 @@ mod test {
         let connection_mapping = Arc::new(Mutex::new(ConnectionMapping::new()));
         let mining_job_map = Arc::new(Mutex::new(std::collections::HashMap::new()));
         let notify_tx = mpsc::channel::<NotifyCmd>(32).0;
-
+        let (swarm_handler, mut swarm_command_receiver) = SwarmHandler::new();
+        let swarm_handler_arc = Arc::new(Mutex::new(swarm_handler));
         let config = StratumServerConfig {
             hostname: "127.0.0.1".to_string(),
             port: 3358,
@@ -1851,7 +1815,9 @@ mod test {
         let port = config.port;
         let mut server = Server::new(config, connection_mapping);
         tokio::spawn(async move {
-            let _ = server.run_stratum_service(mining_job_map, notify_tx).await;
+            let _ = server
+                .run_stratum_service(mining_job_map, notify_tx, swarm_handler_arc)
+                .await;
         });
         tokio::time::sleep(Duration::from_millis(300)).await;
         let addr = format!("127.0.0.1:{}", port);
@@ -1871,7 +1837,8 @@ mod test {
         let mining_job_map: Arc<Mutex<HashMap<String, Arc<Mutex<MiningJobMap>>>>> =
             Arc::new(Mutex::new(HashMap::new()));
         let (notify_tx, _notify_rx) = mpsc::channel::<NotifyCmd>(32);
-
+        let (swarm_handler, mut swarm_command_receiver) = SwarmHandler::new();
+        let swarm_handler_arc = Arc::new(Mutex::new(swarm_handler));
         let config = StratumServerConfig {
             hostname: "127.0.0.1".to_string(),
             port: 5050,
@@ -1883,7 +1850,7 @@ mod test {
         let notify_tx_clone = notify_tx.clone();
         tokio::spawn(async move {
             server
-                .run_stratum_service(mining_job_map_clone, notify_tx_clone)
+                .run_stratum_service(mining_job_map_clone, notify_tx_clone, swarm_handler_arc)
                 .await
                 .unwrap();
         });
@@ -1925,6 +1892,8 @@ mod test {
         Test block taken - 00000020e6ebb395a1e2ba60f17650d790309e21af08062229ad955376ac574300000000e8de27818e402a0d5e6028f363be4b47d809ad348e6bc88ac2f9c2bedf0409e9337edf68ffff001d7aeb8b0601020000000001010000000000000000000000000000000000000000000000000000000000000000ffffffff1602611e089495ac0803000000094272616964706f6f6cffffffff0300f2052a01000000160014e470d0179325db88b55771f6c0a5139dd81d73180000000000000000266a24aa21a9ede2f61c3f71d1defd3fa999dfa36953755c690689799962b48bebd836974e8cf900000000000000002a6a286272616964706f6f6c5f626561645f6d657461646174615f686173685f33326201020304050607080120000000000000000000000000000000000000000000000000000000000000000000000000
 
          */
+        let (swarm_handler, mut swarm_command_receiver) = SwarmHandler::new();
+        let swarm_handler_arc = Arc::new(Mutex::new(swarm_handler));
         let test_merkel_bytes: [u8; 32] = [0u8; 32];
         let mut test_witness = Witness::new();
         test_witness.push(vec![0u8; 32]);
@@ -1981,10 +1950,10 @@ mod test {
             merkle_root: TxMerkleNode::from_byte_array(test_merkel_bytes),
         };
         let mut test_template = BlockTemplate {
-            version: test_template_header.version.to_consensus(),
-            previousblockhash: test_template_header.prev_blockhash.to_string(),
+            version: test_template_header.version,
+            previousblockhash: test_template_header.prev_blockhash,
             transactions: vec![test_coinbase_transaction],
-            curtime: test_template_header.time.to_u32(),
+            curtime: test_template_header.time,
             bits: test_template_header.bits,
             ..Default::default()
         };
@@ -1994,6 +1963,9 @@ mod test {
                 .unwrap();
         println!("{:?}", constructed_test_notification);
         let constructed_test_notification_ref = constructed_test_notification.clone();
+        let current_system_time = std::time::SystemTime::now();
+        let duration_since_epoch = current_system_time.duration_since(UNIX_EPOCH).unwrap();
+        let unix_timestamp = duration_since_epoch.as_secs().to_u32().unwrap();
         let mut mock_downstream_handler = DownstreamClient::default();
         let mock_mining_job_map: Arc<Mutex<MiningJobMap>> =
             Arc::new(Mutex::new(MiningJobMap::new()));
@@ -2004,6 +1976,7 @@ mod test {
             coinbase2: constructed_test_notification_ref.clone().coinbase2.clone(),
             coinbase_merkel_path: vec![],
             coinbase_witness_commitment: Some(test_witness),
+            job_sent_time: unix_timestamp,
         };
         mock_mining_job_map
             .lock()
@@ -2026,7 +1999,12 @@ mod test {
             .handle_configure(&configure_test_request, 1)
             .await;
         let submit_response: StratumResponses = mock_downstream_handler
-            .handle_submit(&test_submit_request_params, mock_mining_job_map.clone(), 2)
+            .handle_submit(
+                &test_submit_request_params,
+                mock_mining_job_map.clone(),
+                2,
+                swarm_handler_arc,
+            )
             .await
             .unwrap();
         match submit_response {

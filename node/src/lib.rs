@@ -1,37 +1,52 @@
 //These implementations must be defined under lib.rs as they are required for intergration tests
-use bitcoin::consensus::encode::deserialize;
-use std::sync::Arc;
+use bitcoin::{
+    consensus::encode::deserialize, ecdsa::Signature, BlockHash, CompactTarget, EcdsaSighashType,
+};
+use num::ToPrimitive;
+use std::{collections::HashSet, str::FromStr, sync::Arc, time::UNIX_EPOCH};
 
 use futures::lock::Mutex;
-use tokio::sync::mpsc;
+use tokio::sync::mpsc::{self, Receiver, Sender};
 
 use crate::{
-    error::IPCtemplateError,
+    bead::Bead,
+    committed_metadata::{CommittedMetadata, TimeVec},
+    error::{IPCtemplateError, StratumErrors},
     stratum::{BlockTemplate, NotifyCmd},
+    uncommitted_metadata::UnCommittedMetadata,
 };
 use std::error::Error;
 pub mod bead;
 pub mod behaviour;
-pub mod block_template;
 pub mod braid;
 pub mod cli;
 pub mod committed_metadata;
-pub mod common_capnp;
 pub mod config;
-pub mod echo_capnp;
 pub mod error;
-pub mod init_capnp;
 pub mod ipc;
-pub mod mining_capnp;
 pub mod peer_manager;
-pub mod proxy_capnp;
-pub mod rpc;
 pub mod rpc_server;
 pub mod stratum;
 pub mod template_creator;
 pub mod uncommitted_metadata;
 pub mod utils;
-pub mod zmq;
+//Including the capnp modules after building while compiling the workspace.package
+pub mod proxy_capnp {
+    include!(concat!(env!("OUT_DIR"), "/proxy_capnp.rs"));
+}
+pub mod mining_capnp {
+    include!(concat!(env!("OUT_DIR"), "/mining_capnp.rs"));
+}
+pub mod echo_capnp {
+    include!(concat!(env!("OUT_DIR"), "/echo_capnp.rs"));
+}
+pub mod common_capnp {
+    include!(concat!(env!("OUT_DIR"), "/common_capnp.rs"));
+}
+pub mod init_capnp {
+    include!(concat!(env!("OUT_DIR"), "/init_capnp.rs"));
+}
+
 /// **Length of the extranonce prefix (in bytes).**
 ///
 /// In Stratum mining, the extranonce is split into two parts:
@@ -97,10 +112,10 @@ pub async fn ipc_template_consumer(
             );
             log::info!("Transactions count is - {}", template_transactions.len());
             let template: BlockTemplate = BlockTemplate {
-                version: template_header.version.to_consensus(),
-                previousblockhash: template_header.prev_blockhash.to_string(),
+                version: template_header.version,
+                previousblockhash: template_header.prev_blockhash,
                 transactions: template_transactions.clone(),
-                curtime: template_header.time.to_u32(),
+                curtime: template_header.time,
                 bits: template_header.bits,
                 ..Default::default()
             };
@@ -157,7 +172,114 @@ pub async fn ipc_template_consumer(
 
     Ok(())
 }
+pub enum SwarmCommand {
+    PropagateValidBead { bead_bytes: Vec<u8> },
+}
+pub struct SwarmHandler {
+    pub command_sender: Sender<SwarmCommand>,
+}
+impl SwarmHandler {
+    pub fn new() -> (Self, Receiver<SwarmCommand>) {
+        let (swarm_stratum_bridge_tx, swarm_stratum_bridge_rx) =
+            mpsc::channel::<SwarmCommand>(1024);
+        (
+            Self {
+                command_sender: swarm_stratum_bridge_tx,
+            },
+            swarm_stratum_bridge_rx,
+        )
+    }
+    pub async fn propagate_valid_bead(
+        &mut self,
+        candidate_block: bitcoin::Block,
+        extranonce_2_raw_value: i32,
+        downstream_client_ip: &str,
+        job_sent_timestamp: u32,
+        downstream_payout_addr: &str,
+    ) -> Result<(), StratumErrors> {
+        let (candidate_block_header, candidate_block_transactions) = candidate_block.into_parts();
+        log::info!("Received command for broadcasting bead via floodsub");
+        //TODO:Currently temprorary placeholder will be replaced in upcoming PRs
+        let public_key = "020202020202020202020202020202020202020202020202020202020202020202"
+            .parse::<bitcoin::PublicKey>()
+            .unwrap();
+        let time_hash_set = TimeVec(Vec::new());
+        let parent_hash_set: HashSet<BlockHash> = HashSet::new();
+        //TODO:This will be replaced via the allotted `WeakShareDifficulty` after Difficulty adjustment
+        let weak_target = CompactTarget::from_consensus(32);
+        //Mindiff
+        let min_target = CompactTarget::from_consensus(1);
+        //Job sent time before downstream starts mining
+        let job_notification_time_val =
+            bitcoin::blockdata::locktime::absolute::Time::from_consensus(job_sent_timestamp)
+                .unwrap();
+        let candidate_block_bead_committed_metadata = CommittedMetadata {
+            comm_pub_key: public_key,
+            transactions: candidate_block_transactions,
+            parents: parent_hash_set,
+            parent_bead_timestamps: time_hash_set,
+            payout_address: downstream_payout_addr.to_string(),
+            start_timestamp: job_notification_time_val,
+            min_target: min_target,
+            weak_target: weak_target,
+            miner_ip: downstream_client_ip.to_string(),
+        };
+        //TODO:This will be either be generated via the `Pubkey` from config parameter from `~/.braidpool`
+        let hex = "3046022100839c1fbc5304de944f697c9f4b1d01d1faeba32d751c0f7acb21ac8a0f436a72022100e89bd46bb3a5a62adc679f659b7ce876d83ee297c7a5587b2011c4fcc72eab45";
+        let sig = Signature {
+            signature: secp256k1::ecdsa::Signature::from_str(hex).unwrap(),
+            sighash_type: EcdsaSighashType::All,
+        };
+        //Current UNIX timestamp during broadcast of bead
+        let current_system_time = std::time::SystemTime::now();
+        let duration_since_epoch = match current_system_time.duration_since(UNIX_EPOCH) {
+            Ok(duration) => duration,
+            Err(error) => {
+                return Err(StratumErrors::ErrorFetchingCurrentUNIXTimestamp {
+                    error: error.to_string(),
+                })
+            }
+        };
 
+        let unix_timestamp = duration_since_epoch.as_secs().to_u32().unwrap();
+
+        let candidate_block_bead_uncommitted_metadata = UnCommittedMetadata {
+            broadcast_timestamp: bitcoin::blockdata::locktime::absolute::MedianTimePast::from_u32(
+                unix_timestamp,
+            )
+            .unwrap(),
+            extra_nonce: extranonce_2_raw_value,
+            signature: sig,
+        };
+        let weak_share = Bead {
+            committed_metadata: candidate_block_bead_committed_metadata,
+            block_header: candidate_block_header,
+            uncommitted_metadata: candidate_block_bead_uncommitted_metadata,
+        };
+        let serialized_weak_share_bytes = bitcoin::consensus::serialize(&weak_share);
+        //After validation of the candidate block constructed by the downstream node sending it to swarm for further propogation
+        match self
+            .command_sender
+            .send(SwarmCommand::PropagateValidBead {
+                bead_bytes: serialized_weak_share_bytes,
+            })
+            .await
+        {
+            Ok(_) => {
+                log::info!("Candidate block sent to swarm after PoW validation");
+            }
+            Err(error) => {
+                log::error!(
+                    "An error occurred while sending candidate block to swarm after PoW validation"
+                );
+                return Err(StratumErrors::CandidateBlockNotSent {
+                    error: error.to_string(),
+                });
+            }
+        };
+        Ok(())
+    }
+}
 ///Initializing the logger via `tokio_trace`
 pub fn setup_logging() {
     env_logger::init_from_env(
