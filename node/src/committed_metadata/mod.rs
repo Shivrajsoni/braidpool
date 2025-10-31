@@ -1,4 +1,5 @@
 use crate::utils::{hashset_to_vec_deterministic, vec_to_hashset, BeadHash};
+use bitcoin::absolute::MedianTimePast;
 use bitcoin::absolute::Time;
 use bitcoin::consensus::encode::Decodable;
 use bitcoin::consensus::encode::Encodable;
@@ -10,6 +11,7 @@ use bitcoin::Transaction;
 use serde::Deserialize;
 use serde::Serialize;
 use std::collections::HashSet;
+use std::str::FromStr;
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, Default)]
 pub struct TimeVec(pub Vec<Time>);
@@ -55,7 +57,24 @@ pub struct CommittedMetadata {
     pub weak_target: CompactTarget,
     pub miner_ip: String,
 }
-
+impl Default for CommittedMetadata {
+    fn default() -> Self {
+        Self {
+            transactions: Vec::new(),
+            parents: HashSet::new(),
+            parent_bead_timestamps: TimeVec(Vec::new()),
+            payout_address: "bc1".to_string(),
+            start_timestamp: MedianTimePast::MIN,
+            comm_pub_key: PublicKey::from_str(
+                "020202020202020202020202020202020202020202020202020202020202020202",
+            )
+            .unwrap(),
+            min_target: CompactTarget::from_consensus(1),
+            weak_target: CompactTarget::from_consensus(1),
+            miner_ip: "127.0.0.1".to_string(),
+        }
+    }
+}
 impl Encodable for CommittedMetadata {
     fn consensus_encode<W: Write + ?Sized>(&self, w: &mut W) -> Result<usize, io::Error> {
         let mut len = 0;

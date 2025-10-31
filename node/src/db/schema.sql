@@ -1,6 +1,6 @@
 -- 1. Bead
 CREATE TABLE Bead (
-    id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+    id                  INTEGER PRIMARY KEY ,
     hash                TEXT NOT NULL CHECK (hash REGEXP '^[0-9A-Fa-f]{64}$'),
     -- Block header fields
     nVersion            TEXT NOT NULL CHECK (nVersion REGEXP '^[0-9A-Fa-f]{8}$'),

@@ -31,7 +31,7 @@ pub enum ErrorKind {
     ConnectionBroken,
     LogicError,
 }
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum DBErrors {
     TupleNotInserted { error: String },
     TupleNotFetched { error: String },
@@ -39,10 +39,14 @@ pub enum DBErrors {
     FetchTransactionNotCommitted { error: String, query_name: String },
     ConnectionToDBNotEstablished { error: String },
     TransactionNotRolledBack { error: String, query: String },
+    TupleAtrributeParsingError { error: String, attribute: String },
 }
 impl fmt::Display for DBErrors {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            DBErrors::TupleAtrributeParsingError { error, attribute } => {
+                write!(f,"An error occurred while fetching bead from DB due to parsing of {:?} due to - {:?}",attribute,error)
+            }
             DBErrors::TransactionNotRolledBack { error, query } => {
                 write!(
                     f,

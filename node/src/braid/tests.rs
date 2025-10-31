@@ -13,23 +13,15 @@ use crate::braid::consensus_functions::reverse;
 use crate::braid::consensus_functions::tips;
 use crate::braid::consensus_functions::updating_ancestors;
 use crate::braid::Cohort;
-use crate::committed_metadata::TimeVec;
 use crate::utils::test_utils::test_utility_functions::*;
 use bitcoin::block::BlockHash as BeadHash;
-use bitcoin::{
-    absolute::Time, ecdsa::Signature, BlockHash, BlockHeader, BlockTime, BlockVersion,
-    CompactTarget, EcdsaSighashType, PublicKey, TxMerkleNode,
-};
 use num::range;
 use num::BigUint;
-use rand::{rngs::OsRng, thread_rng, RngCore};
-use secp256k1::{Message, Secp256k1, SecretKey};
 use serde::{Deserialize, Serialize};
 use serde_json;
 use std::collections::HashMap;
 use std::collections::HashSet;
 use std::path::Path;
-use std::str::FromStr;
 #[derive(Clone, Debug, Serialize, Deserialize)]
 struct FileBraid {
     pub description: String,
@@ -44,96 +36,6 @@ struct FileBraid {
 }
 
 pub const BRAIDTESTDIRECTORY: &str = "tests/braids";
-
-fn generate_random_public_key_string() -> String {
-    let secp = Secp256k1::new();
-    let mut rng = thread_rng();
-    let secret_key = SecretKey::new(&mut rng);
-    let public_key = PublicKey::new(secret_key.public_key(&secp));
-    public_key.to_string()
-}
-
-fn emit_bead() -> Bead {
-    // This function creates a random bead for testing purposes.
-
-    let random_public_key = generate_random_public_key_string()
-        .parse::<bitcoin::PublicKey>()
-        .unwrap();
-    // Generate a reasonable timestamp (between 2020-01-01 and now)
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap()
-        .as_secs() as u32;
-    let current_time = Time::from_consensus(now).unwrap();
-
-    let _address = String::from("127.0.0.1:8888");
-    let public_key = random_public_key;
-    let socket: String = String::from("127.0.0.1");
-    let time_hash_set = TimeVec(Vec::new());
-    let parent_hash_set: HashSet<BlockHash> = HashSet::new();
-    let weak_target = CompactTarget::from_consensus(32);
-    let min_target = CompactTarget::from_consensus(1);
-    let time_val = current_time;
-
-    let committed_metadata = TestCommittedMetadataBuilder::new()
-        .comm_pub_key(public_key)
-        .miner_ip(socket)
-        .start_timestamp(time_val)
-        .parents(parent_hash_set)
-        .parent_bead_timestamps(time_hash_set)
-        .payout_address(_address)
-        .min_target(min_target)
-        .weak_target(weak_target)
-        .transactions(vec![])
-        .build();
-
-    let extra_nonce = rand::random::<i32>();
-    let secp = Secp256k1::new();
-
-    // Generate random secret key
-    let mut rng = OsRng::default();
-    let (secret_key, _) = secp.generate_keypair(&mut rng);
-
-    // Create random 32-byte message
-    let mut msg_bytes = [0u8; 32];
-    rng.fill_bytes(&mut msg_bytes);
-    let msg = Message::from_digest(msg_bytes);
-
-    // Sign the message
-    let signature = secp.sign_ecdsa(&msg, &secret_key);
-
-    // DER encode the signature and get hex
-    let der_sig = signature.serialize_der();
-    let hex = hex::encode(der_sig);
-
-    let sig = Signature {
-        signature: secp256k1::ecdsa::Signature::from_str(&hex).unwrap(),
-        sighash_type: EcdsaSighashType::All,
-    };
-
-    let uncommitted_metadata = TestUnCommittedMetadataBuilder::new()
-        .broadcast_timestamp(time_val)
-        .extra_nonce(extra_nonce)
-        .signature(sig)
-        .build();
-    let bytes: [u8; 32] = [0u8; 32];
-
-    let test_block_header = BlockHeader {
-        version: BlockVersion::TWO,
-        prev_blockhash: BlockHash::from_byte_array(bytes),
-        bits: CompactTarget::from_consensus(32),
-        nonce: rand::random::<u32>(),
-        time: BlockTime::from_u32(rand::random::<u32>()),
-        merkle_root: TxMerkleNode::from_byte_array(bytes),
-    };
-
-    let test_bead = TestBeadBuilder::new()
-        .block_header(test_block_header)
-        .committed_metadata(committed_metadata)
-        .uncommitted_metadata(uncommitted_metadata)
-        .build();
-    test_bead
-}
 
 fn loading_braid_from_file(file_path: &str) -> (Braid, FileBraid) {
     let current_file_path = file_path;
