@@ -270,6 +270,8 @@ WHERE b.broadcast_timestamp < :cutoff_time
 
 ### 24. **Insert a bead and all dependent rows atomically**
 
+Uses JSON arrays to handle variable numbers of transactions, relatives, and timestamps. Requires SQLite 3.38+.
+
 ```sql
 BEGIN IMMEDIATE;
 
@@ -298,17 +300,26 @@ INSERT INTO Bead (
 );
 
 INSERT INTO Transactions (bead_id, txid)
-SELECT last_insert_rowid(), txid
-FROM (VALUES {transaction_values}) AS t(txid)
-WHERE txid IS NOT NULL;
+SELECT Bead.id, value
+FROM Bead, json_each(:transactions_json)
+WHERE Bead.hash = :hash;
 
 INSERT INTO Relatives (child, parent)
-VALUES {relatives_values};
+SELECT Bead.id, value
+FROM Bead, json_each(:relatives_json)
+WHERE Bead.hash = :hash;
 
 INSERT INTO ParentTimestamps (parent, child, timestamp)
-VALUES {parent_timestamps_values};
+SELECT json_extract(value, '$.parent'), Bead.id, json_extract(value, '$.timestamp')
+FROM Bead, json_each(:parent_timestamps_json)
+WHERE Bead.hash = :hash;
 
 COMMIT;
 ```
 
-`{transaction_values}` should expand to a comma-separated list of single-column tuples such as `('txid1'),('txid2')`. When a bead has no transactions, provide a single sentinel tuple `(NULL)` so the `VALUES` clause is valid; the `WHERE txid IS NOT NULL` filter skips that dummy row. Relatives and ParentTimestamps logically cannot be empty (the bead is consensus-invalid) so `{relatives_values}` and `{parent_timestamps_values}` must expand to non-empty tuples for their respective columns. Because every statement is executed between `BEGIN IMMEDIATE` and `COMMIT`, any error in a child insert triggers an automatic rollback of the entire batch.
+**Parameters:**
+- `:transactions_json` = `'["txid1","txid2","txid3"]'` (or empty array `'[]'`)
+- `:relatives_json` = `'[1,2]'`
+- `:parent_timestamps_json` = `'[{"parent":1,"timestamp":1234567890},{"parent":2,"timestamp":1234567891}]'`
+
+This approach uses `json_each()` to iterate over JSON arrays, allowing variable numbers of dependent rows without string generation. All operations are atomic within a single transaction.
