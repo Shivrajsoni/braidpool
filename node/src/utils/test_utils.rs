@@ -19,7 +19,8 @@ pub mod test_utility_functions {
     use std::{collections::HashSet, str::FromStr};
 
     use bitcoin::{
-        BlockHash, BlockTime, BlockVersion, CompactTarget, EcdsaSighashType, TxMerkleNode,
+        pow::CompactTargetExt, BlockHash, BlockTime, BlockVersion, CompactTarget, EcdsaSighashType,
+        TxMerkleNode,
     };
     use rand::{rngs::OsRng, thread_rng, RngCore};
     use secp256k1::{Message, Secp256k1, SecretKey};
@@ -225,8 +226,8 @@ pub mod test_utility_functions {
         let socket: String = String::from("127.0.0.1");
         let time_hash_set = TimeVec(Vec::new());
         let parent_hash_set: HashSet<BlockHash> = HashSet::new();
-        let weak_target = CompactTarget::from_consensus(4294967295);
-        let min_target = CompactTarget::from_consensus(487587584);
+        let weak_target = CompactTarget::from_unprefixed_hex("1d00ffff").unwrap();
+        let min_target = CompactTarget::from_unprefixed_hex("1d00ffff").unwrap();
         let time_val = current_time;
 
         let committed_metadata = TestCommittedMetadataBuilder::new()
@@ -275,7 +276,7 @@ pub mod test_utility_functions {
         let test_block_header = BlockHeader {
             version: BlockVersion::TWO,
             prev_blockhash: BlockHash::from_byte_array(bytes),
-            bits: CompactTarget::from_consensus(439041101),
+            bits: CompactTarget::from_consensus(486604799),
             nonce: rand::random::<u32>(),
             time: BlockTime::from_u32(rand::random::<u32>()),
             merkle_root: TxMerkleNode::from_byte_array(bytes),

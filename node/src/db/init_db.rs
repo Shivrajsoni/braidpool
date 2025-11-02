@@ -1,37 +1,97 @@
-use anyhow::Result;
 use sqlx::{sqlite::SqliteConnectOptions, Executor, SqlitePool};
 use std::{env, fs, path::Path, str::FromStr};
 
-pub async fn init_db() -> Result<SqlitePool> {
-    let home_dir = env::var("HOME")?;
-    let db_dir = Path::new(&home_dir).join(".braidpool");
-    let db_path = db_dir.join("braidpool.db");
-    let schema_path =
-        Path::new(&std::env::var("CARGO_MANIFEST_DIR").unwrap()).join("src/db/schema.sql");
-    fs::create_dir_all(&db_dir)?;
+use crate::error::DBErrors;
 
+pub async fn init_db() -> Result<SqlitePool, DBErrors> {
+    //Fetching the home directory
+    let home_dir = match env::var("HOME") {
+        Ok(fetched_var) => fetched_var,
+        Err(error) => {
+            return Err(DBErrors::EnvVariableNotFetched {
+                error: error.to_string(),
+                var: "{HOME} Directory".to_string(),
+            });
+        }
+    };
+    let db_dir = Path::new(&home_dir).join(".braidpool");
+    //Final db directory path
+    let db_path = db_dir.join("braidpool.db");
+    //Schema path to be initialized after creating db directory
+    let schema_path = Path::new(&std::env::current_dir().unwrap()).join("src/db/schema.sql");
+    //Reading schema to string
+    let schema_sql = match fs::read_to_string(&schema_path.as_path()) {
+        Ok(schema_string) => schema_string,
+        Err(error) => {
+            return Err(DBErrors::SchemaPathNotFound {
+                error: error.to_string(),
+                schema_desired_path: schema_path,
+            });
+        }
+    };
+    log::info!("Schema path - {:?}", schema_path);
+    //Creating db directory
+    match fs::create_dir_all(&db_dir) {
+        Ok(_) => {
+            log::info!("DB directory created successfully");
+        }
+        Err(error) => {
+            return Err(DBErrors::DBDirectoryNotCreated {
+                error: error.to_string(),
+                path: db_path,
+            });
+        }
+    };
+    //sqlite db url
     let db_url = format!("sqlite://{}", db_path.to_string_lossy());
     let db_exists = db_path.exists();
-    let sql_lite_connections = SqliteConnectOptions::from_str(&db_url)
-        .unwrap()
+    //SQl connection configurations
+    let db_config = match SqliteConnectOptions::from_str(&db_url) {
+        Ok(config) => config,
+        Err(error) => {
+            return Err(DBErrors::ConnectionUrlNotParsed {
+                error: error.to_string(),
+                url: db_url.to_string(),
+            });
+        }
+    };
+    let sql_lite_connections = db_config
         .with_regexp()
         .foreign_keys(true)
         .journal_mode(sqlx::sqlite::SqliteJournalMode::Wal);
-
+    //Initalizing connection to existing DB
     let conn = if db_exists {
         log::info!("Database already exists at {:?}", db_path);
-        let pool = SqlitePool::connect_with(sql_lite_connections)
-            .await
-            .unwrap();
+        let pool = match SqlitePool::connect_with(sql_lite_connections).await {
+            Ok(initialized_pool) => initialized_pool,
+            Err(error) => {
+                return Err(DBErrors::ConnectionToSQlitePoolFailed {
+                    error: error.to_string(),
+                });
+            }
+        };
         pool
     } else {
         let _file = std::fs::File::create_new(db_path.clone());
-        let schema_sql = fs::read_to_string(&schema_path.as_path()).unwrap();
-        let pool = SqlitePool::connect_with(sql_lite_connections)
-            .await
-            .unwrap();
-        pool.execute(schema_sql.as_str()).await.unwrap();
-        log::info!("Schema initialized successfully at {:?}", db_path);
+        let pool = match SqlitePool::connect_with(sql_lite_connections).await {
+            Ok(initialized_pool) => initialized_pool,
+            Err(error) => {
+                return Err(DBErrors::ConnectionToSQlitePoolFailed {
+                    error: error.to_string(),
+                });
+            }
+        };
+        let _query_result = match pool.execute(schema_sql.as_str()).await {
+            Ok(_res) => {
+                log::info!("Schema initialized successfully at {:?}", db_path);
+            }
+            Err(error) => {
+                return Err(DBErrors::SchemaNotInitialized {
+                    error: error.to_string(),
+                    db_path: db_path,
+                })
+            }
+        };
         pool
     };
 

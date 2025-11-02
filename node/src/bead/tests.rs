@@ -14,6 +14,7 @@ use bitcoin::consensus::encode::Encodable;
 use bitcoin::consensus::serialize;
 use bitcoin::consensus::DeserializeError;
 use bitcoin::ecdsa::Signature;
+use bitcoin::pow::CompactTargetExt;
 use bitcoin::BlockHash;
 use bitcoin::BlockHeader;
 use bitcoin::BlockTime;
@@ -37,8 +38,8 @@ fn test_serialized_committed_metadata() {
     let time_val = Time::from_consensus(1653195600).unwrap();
     let parent_hash_set: HashSet<BlockHash> = HashSet::new();
     let time_hash_set = TimeVec(Vec::new());
-    let weak_target = CompactTarget::from_consensus(32);
-    let min_target = CompactTarget::from_consensus(1);
+    let weak_target = CompactTarget::from_unprefixed_hex("1d00ffff").unwrap();
+    let min_target = CompactTarget::from_unprefixed_hex("1d00ffff").unwrap();
     let test_committed_metadata = TestCommittedMetadataBuilder::new()
         .comm_pub_key(public_key)
         .miner_ip(socket)
@@ -178,8 +179,8 @@ fn test_bead_response_serialization() {
     let socket = String::from("127.0.0.1");
     let time_hash_set = TimeVec(Vec::new());
     let parent_hash_set: HashSet<BlockHash> = HashSet::new();
-    let weak_target = CompactTarget::from_consensus(32);
-    let min_target = CompactTarget::from_consensus(1);
+    let weak_target = CompactTarget::from_unprefixed_hex("1d00ffff").unwrap();
+    let min_target = CompactTarget::from_unprefixed_hex("1d00ffff").unwrap();
     let time_val = Time::from_consensus(1653195600).unwrap();
     let test_committed_metadata = TestCommittedMetadataBuilder::new()
         .comm_pub_key(public_key)

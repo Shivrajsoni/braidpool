@@ -30,7 +30,7 @@ impl Default for Bead {
         let empty_merkel_bytes: [u8; 32] = [0; 32];
         Self {
             block_header: BlockHeader {
-                bits: CompactTarget::from_consensus(1),
+                bits: CompactTarget::from_consensus(486604799),
                 merkle_root: TxMerkleNode::from_byte_array(empty_merkel_bytes),
                 nonce: 0,
                 prev_blockhash: BlockHash::GENESIS_PREVIOUS_BLOCK_HASH,

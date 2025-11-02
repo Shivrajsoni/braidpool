@@ -273,48 +273,33 @@ WHERE b.broadcast_timestamp < :cutoff_time
 Uses JSON arrays to handle variable numbers of transactions, relatives, and timestamps. Requires SQLite 3.38+.
 
 ```sql
-BEGIN IMMEDIATE;
+BEGIN TRANSACTION;
 
-INSERT INTO Bead (
-    hash, nVersion, hashPrevBlock, hashMerkleRoot, nTime,
-    nBits, nNonce, payout_address, start_timestamp, comm_pub_key,
-    min_target, weak_target, miner_ip, extra_nonce,
-    broadcast_timestamp, signature
-) VALUES (
-    :hash,
-    :n_version,
-    :hash_prev_block,
-    :hash_merkle_root,
-    :n_time,
-    :n_bits,
-    :n_nonce,
-    :payout_address,
-    :start_timestamp,
-    :comm_pub_key,
-    :min_target,
-    :weak_target,
-    :miner_ip,
-    :extra_nonce,
-    :broadcast_timestamp,
-    :signature
-);
+    INSERT INTO bead (
+        id, hash, nVersion, hashPrevBlock, hashMerkleRoot, nTime,
+        nBits, nNonce, payout_address, start_timestamp, comm_pub_key,
+        min_target, weak_target, miner_ip, extra_nonce,
+        broadcast_timestamp, signature
+    )
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
 
-INSERT INTO Transactions (bead_id, txid)
-SELECT Bead.id, value
-FROM Bead, json_each(:transactions_json)
-WHERE Bead.hash = :hash;
+    INSERT INTO Transactions (bead_id, txid)
+    SELECT 
+        json_extract(value, '$.bead_id') AS bead_id,
+        json_extract(value, '$.txid') AS txid
+    FROM json_each(?);
 
-INSERT INTO Relatives (child, parent)
-SELECT Bead.id, value
-FROM Bead, json_each(:relatives_json)
-WHERE Bead.hash = :hash;
+    INSERT INTO Relatives (child, parent) 
+    SELECT json_extract(value,'$.child') AS child,
+        json_extract(value,'$.parent') AS PARENT
+    FROM json_each(?);
 
-INSERT INTO ParentTimestamps (parent, child, timestamp)
-SELECT json_extract(value, '$.parent'), Bead.id, json_extract(value, '$.timestamp')
-FROM Bead, json_each(:parent_timestamps_json)
-WHERE Bead.hash = :hash;
-
-COMMIT;
+    INSERT INTO ParentTimestamps (parent, child, timestamp)
+    SELECT json_extract(value,'$.parent') AS parent,
+            json_extract(value,'$.child') AS child,
+            json_extract(value,'$.timestamp') AS timestamp
+    FROM json_each(?);
+    COMMIT;
 ```
 
 **Parameters:**

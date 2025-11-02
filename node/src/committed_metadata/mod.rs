@@ -69,8 +69,8 @@ impl Default for CommittedMetadata {
                 "020202020202020202020202020202020202020202020202020202020202020202",
             )
             .unwrap(),
-            min_target: CompactTarget::from_consensus(1),
-            weak_target: CompactTarget::from_consensus(1),
+            min_target: CompactTarget::from_consensus(486604799),
+            weak_target: CompactTarget::from_consensus(486604799),
             miner_ip: "127.0.0.1".to_string(),
         }
     }

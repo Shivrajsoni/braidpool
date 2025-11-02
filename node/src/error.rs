@@ -1,5 +1,5 @@
 //All braidpool specific errors are defined here
-use std::fmt;
+use std::{fmt, path::PathBuf};
 
 use crate::stratum::{BlockTemplate, JobDetails};
 use bitcoin::address::ParseError as AddressParseError;
@@ -33,18 +33,84 @@ pub enum ErrorKind {
 }
 #[derive(Debug, Clone)]
 pub enum DBErrors {
-    TupleNotInserted { error: String },
-    TupleNotFetched { error: String },
-    InsertionTransactionNotCommitted { error: String, query_name: String },
-    FetchTransactionNotCommitted { error: String, query_name: String },
-    ConnectionToDBNotEstablished { error: String },
-    TransactionNotRolledBack { error: String, query: String },
-    TupleAtrributeParsingError { error: String, attribute: String },
+    TupleNotInserted {
+        error: String,
+    },
+    TupleNotFetched {
+        error: String,
+    },
+    InsertionTransactionNotCommitted {
+        error: String,
+        query_name: String,
+    },
+    FetchTransactionNotCommitted {
+        error: String,
+        query_name: String,
+    },
+    ConnectionToDBNotEstablished {
+        error: String,
+    },
+    TransactionNotRolledBack {
+        error: String,
+        query: String,
+    },
+    TupleAttributeParsingError {
+        error: String,
+        attribute: String,
+    },
+    EnvVariableNotFetched {
+        error: String,
+        var: String,
+    },
+    DBDirectoryNotCreated {
+        error: String,
+        path: PathBuf,
+    },
+    ConnectionToSQlitePoolFailed {
+        error: String,
+    },
+    SchemaNotInitialized {
+        error: String,
+        db_path: PathBuf,
+    },
+    SchemaPathNotFound {
+        error: String,
+        schema_desired_path: PathBuf,
+    },
+    ConnectionUrlNotParsed {
+        error: String,
+        url: String,
+    },
 }
 impl fmt::Display for DBErrors {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            DBErrors::TupleAtrributeParsingError { error, attribute } => {
+            DBErrors::ConnectionUrlNotParsed { error, url } => {
+                write!(f,"Connection URL - {:?} could not be parsed for building connection configuration and initializing connection due to - {:?}",url,error)
+            }
+            DBErrors::SchemaPathNotFound {
+                error,
+                schema_desired_path,
+            } => {
+                write!(
+                    f,
+                    "Schema could not be read to string due to - {:?} from the path - {:?}",
+                    error, schema_desired_path
+                )
+            }
+            DBErrors::SchemaNotInitialized { error, db_path } => {
+                write!(f,"Connection to DB initialized but schema could not be executed at the given DB path {:?} due to - {:?}",db_path,error.to_string())
+            }
+            DBErrors::ConnectionToSQlitePoolFailed { error } => {
+                write!(f,"Connection to pool could not be initialized hence DB connection could not be made due to - {:?}",error)
+            }
+            DBErrors::DBDirectoryNotCreated { error, path } => {
+                write!(f, "Directory at the desired path - {:?} could not be created kindly check permissions due to - {:?}",path.to_string_lossy().clone(),error)
+            }
+            DBErrors::EnvVariableNotFetched { error, var } => {
+                write!(f,"DB not initialized due to environment variable {:?} could not be fetched due to - {:?}",var,error)
+            }
+            DBErrors::TupleAttributeParsingError { error, attribute } => {
                 write!(f,"An error occurred while fetching bead from DB due to parsing of {:?} due to - {:?}",attribute,error)
             }
             DBErrors::TransactionNotRolledBack { error, query } => {

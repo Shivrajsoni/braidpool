@@ -26,8 +26,8 @@ fn create_test_bead() -> Bead {
     let socket = String::from("127.0.0.1");
     let time_hash_set = TimeVec(Vec::new());
     let parent_hash_set: HashSet<BlockHash> = HashSet::new();
-    let weak_target = CompactTarget::from_consensus(32);
-    let min_target = CompactTarget::from_consensus(1);
+    let weak_target = CompactTarget::from_consensus(486604799);
+    let min_target = CompactTarget::from_consensus(486604799);
     let time_val = Time::from_consensus(1653195600).unwrap();
     let test_committed_metadata = TestCommittedMetadataBuilder::new()
         .comm_pub_key(public_key)
@@ -55,7 +55,7 @@ fn create_test_bead() -> Bead {
     let test_block_header = BlockHeader {
         version: BlockVersion::TWO,
         prev_blockhash: BlockHash::from_byte_array(test_bytes),
-        bits: CompactTarget::from_consensus(32),
+        bits: CompactTarget::from_consensus(486604799),
         nonce: 1,
         time: BlockTime::from_u32(8328429),
         merkle_root: TxMerkleNode::from_byte_array(test_bytes),

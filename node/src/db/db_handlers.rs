@@ -16,12 +16,41 @@ use bitcoin::{
 };
 use futures::lock::Mutex;
 use num::ToPrimitive;
+use serde_json::json;
 use sqlx::{Pool, Row, Sqlite};
 use tokio::sync::{
     mpsc::{Receiver, Sender},
     RwLock,
 };
+const DB_CHANNEL_CAPACITY: usize = 1024;
+const INSERT_QUERY: &'static str = "   
+BEGIN TRANSACTION;
 
+INSERT INTO bead (
+    id, hash, nVersion, hashPrevBlock, hashMerkleRoot, nTime,
+    nBits, nNonce, payout_address, start_timestamp, comm_pub_key,
+    min_target, weak_target, miner_ip, extra_nonce,
+    broadcast_timestamp, signature
+)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+
+INSERT INTO Transactions (bead_id, txid)
+SELECT 
+    json_extract(value, '$.bead_id') AS bead_id,
+    json_extract(value, '$.txid') AS txid
+FROM json_each(?);
+
+INSERT INTO Relatives (child, parent) 
+SELECT json_extract(value,'$.child') AS child,
+    json_extract(value,'$.parent') AS PARENT
+FROM json_each(?);
+
+INSERT INTO ParentTimestamps (parent, child, timestamp)
+SELECT json_extract(value,'$.parent') AS parent,
+        json_extract(value,'$.child') AS child,
+        json_extract(value,'$.timestamp') AS timestamp
+FROM json_each(?);
+COMMIT;";
 #[derive(Debug)]
 pub struct DBHandler {
     //Query reciever inherit to handler only
@@ -30,9 +59,6 @@ pub struct DBHandler {
     pub db_connection: Arc<Mutex<Pool<Sqlite>>>,
     local_braid_arc: Arc<RwLock<Braid>>,
 }
-// The DATABASE_URL environment variable must be set at build time to a database which it can prepare queries against; the database does not have to contain any data but must be the same kind (MySQL, Postgres, etc.) and have the same schema as the database you will be connecting to at runtime.
-//A transaction starts with a call to Pool::begin or Connection::begin.
-// A transaction should end with a call to commit or rollback. If neither are called before the transaction goes out-of-scope, rollback is called. In other words, rollback is called on drop if the transaction is still in-progress.
 impl DBHandler {
     pub async fn new(
         local_braid_arc: Arc<RwLock<Braid>>,
@@ -47,7 +73,7 @@ impl DBHandler {
                 });
             }
         };
-        let (db_handler_tx, db_handler_rx) = tokio::sync::mpsc::channel(1024);
+        let (db_handler_tx, db_handler_rx) = tokio::sync::mpsc::channel(DB_CHANNEL_CAPACITY);
         Ok((
             Self {
                 receiver: db_handler_rx,
@@ -58,7 +84,7 @@ impl DBHandler {
         ))
     }
     //Insertion handlers private
-    pub async fn insert_sequential_insert_bead(
+    pub async fn insert_bead(
         &self,
         bead: Bead,
         braid_parent_set: &HashMap<usize, HashSet<usize>>,
@@ -94,55 +120,39 @@ impl DBHandler {
         for bead_tx in bead.committed_metadata.transactions.iter() {
             transaction_tuples.push(((*bead_id as u64), bead_tx.compute_txid().to_string()));
         }
+        //Constructing json bindings
         let transactions_values = transaction_tuples
             .iter()
-            .map(|t| format!("(last_insert_rowid(), '{}')", t.1))
-            .collect::<Vec<_>>()
-            .join(", ");
+            .map(|t| {
+                json!({
+                    "txid":t.1,
+                    "bead_id":t.0
+                })
+            })
+            .collect::<Vec<_>>();
         let parent_timestamps_values = parent_timestamp_tuples
             .iter()
-            .map(|p| format!("({}, {}, {})", p.0, p.1, p.2))
-            .collect::<Vec<_>>()
-            .join(", ");
+            .map(|p| {
+                json!({
+                    "child":p.1,
+                    "parent":p.0,
+                    "timestamp":p.2
+                })
+            })
+            .collect::<Vec<_>>();
 
         let relatives_values = relative_tuples
             .iter()
-            .map(|r| format!("({}, {})", r.1, r.0))
-            .collect::<Vec<_>>()
-            .join(", ");
-        let sub_query_1 = "
-        BEGIN TRANSACTION;
-        INSERT INTO bead (
-            id,hash, nVersion, hashPrevBlock, hashMerkleRoot, nTime, 
-            nBits, nNonce, payout_address, start_timestamp, comm_pub_key,
-            min_target, weak_target, miner_ip, extra_nonce, 
-            broadcast_timestamp, signature
-        ) VALUES (?,?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
-";
-        let mut sub_query_2 = String::new();
-        let mut sub_query_3 = String::new();
-        let mut sub_query_4 = String::new();
-
-        if !transactions_values.is_empty() {
-            sub_query_2 = format!(
-                "INSERT INTO Transactions (bead_id, txid) VALUES {transactions_values};
-                            "
-            );
-        }
-        if !relatives_values.is_empty() {
-            sub_query_3 =
-                format!("INSERT INTO Relatives (child, parent) VALUES {relatives_values};");
-        }
-        if !parent_timestamps_values.is_empty() {
-            sub_query_4 = format!(
-                "INSERT INTO ParentTimestamps (parent, child, timestamp) VALUES {parent_timestamps_values};"
-            );
-        }
-
-        let sql_query = format!(
-            "{}{}{}{} COMMIT;",
-            sub_query_1, sub_query_2, sub_query_3, sub_query_4
-        );
+            .map(|r| {
+                json!({
+                    "parent":r.0,
+                    "child":r.1
+                })
+            })
+            .collect::<Vec<_>>();
+        let txs_json = serde_json::to_string(&transactions_values).unwrap();
+        let relative_json = serde_json::to_string(&relatives_values).unwrap();
+        let parent_timestamp_json = serde_json::to_string(&parent_timestamps_values).unwrap();
         let hex_converted_version =
             hex::encode(bead.block_header.version.to_consensus().to_be_bytes());
         let hex_converted_nonce = hex::encode(bead.block_header.nonce.to_be_bytes());
@@ -151,7 +161,7 @@ impl DBHandler {
         let hex_converted_extranonce =
             hex::encode(bead.uncommitted_metadata.extra_nonce.to_be_bytes());
         //All fields are in be format
-        if let Err(e) = sqlx::query(&sql_query)
+        if let Err(e) = sqlx::query(&INSERT_QUERY)
             .bind(*bead_id as i64)
             .bind(bead.block_header.block_hash().to_string())
             .bind(hex_converted_version)
@@ -170,6 +180,9 @@ impl DBHandler {
             .bind("0101010101010101".to_string())
             .bind(bead.uncommitted_metadata.broadcast_timestamp.to_string())
             .bind(bead.uncommitted_metadata.signature.to_string())
+            .bind(txs_json)
+            .bind(relative_json)
+            .bind(parent_timestamp_json)
             .execute(&self.db_connection.lock().await.clone())
             .await
         {
@@ -234,7 +247,7 @@ impl DBHandler {
                             .get(&bead_to_insert.block_header.block_hash())
                             .unwrap();
                         let _res = self
-                            .insert_sequential_insert_bead(
+                            .insert_bead(
                                 bead_to_insert,
                                 &braid_parent_set,
                                 &ancestor_mapping,
@@ -262,7 +275,7 @@ pub async fn fetch_bead_by_bead_hash(
             let version = match i32::from_str_radix(row.get::<String, _>("nVersion").as_str(), 16) {
                 Ok(v) => BlockVersion::from_consensus(v),
                 Err(e) => {
-                    return Err(DBErrors::TupleAtrributeParsingError {
+                    return Err(DBErrors::TupleAttributeParsingError {
                         error: e.to_string(),
                         attribute: "nVersion".to_string(),
                     })
@@ -271,7 +284,7 @@ pub async fn fetch_bead_by_bead_hash(
             let prev = match BlockHash::from_str(&row.get::<String, _>("hashPrevBlock")) {
                 Ok(v) => v,
                 Err(e) => {
-                    return Err(DBErrors::TupleAtrributeParsingError {
+                    return Err(DBErrors::TupleAttributeParsingError {
                         error: e.to_string(),
                         attribute: "hashPrevBlock".to_string(),
                     })
@@ -280,7 +293,7 @@ pub async fn fetch_bead_by_bead_hash(
             let merkle = match TxMerkleNode::from_str(&row.get::<String, _>("hashMerkleRoot")) {
                 Ok(v) => v,
                 Err(e) => {
-                    return Err(DBErrors::TupleAtrributeParsingError {
+                    return Err(DBErrors::TupleAttributeParsingError {
                         error: e.to_string(),
                         attribute: "hashMerkleRoot".to_string(),
                     })
@@ -289,7 +302,7 @@ pub async fn fetch_bead_by_bead_hash(
             let time = match u32::from_str_radix(row.get::<String, _>("nTime").as_str(), 16) {
                 Ok(v) => BlockTime::from_u32(v),
                 Err(e) => {
-                    return Err(DBErrors::TupleAtrributeParsingError {
+                    return Err(DBErrors::TupleAttributeParsingError {
                         error: e.to_string(),
                         attribute: "nTime".to_string(),
                     })
@@ -298,7 +311,7 @@ pub async fn fetch_bead_by_bead_hash(
             let bits = match CompactTarget::from_unprefixed_hex(&row.get::<String, _>("nBits")) {
                 Ok(v) => v,
                 Err(e) => {
-                    return Err(DBErrors::TupleAtrributeParsingError {
+                    return Err(DBErrors::TupleAttributeParsingError {
                         error: e.to_string(),
                         attribute: "nBits".to_string(),
                     })
@@ -307,7 +320,7 @@ pub async fn fetch_bead_by_bead_hash(
             let nonce = match u32::from_str_radix(row.get::<String, _>("nNonce").as_str(), 16) {
                 Ok(v) => v,
                 Err(e) => {
-                    return Err(DBErrors::TupleAtrributeParsingError {
+                    return Err(DBErrors::TupleAttributeParsingError {
                         error: e.to_string(),
                         attribute: "nNonce".to_string(),
                     })
@@ -316,7 +329,7 @@ pub async fn fetch_bead_by_bead_hash(
             let comm_pub_key = match PublicKey::from_str(&row.get::<String, _>("comm_pub_key")) {
                 Ok(v) => v,
                 Err(e) => {
-                    return Err(DBErrors::TupleAtrributeParsingError {
+                    return Err(DBErrors::TupleAttributeParsingError {
                         error: e.to_string(),
                         attribute: "comm_pub_key".to_string(),
                     })
@@ -326,7 +339,7 @@ pub async fn fetch_bead_by_bead_hash(
                 match CompactTarget::from_unprefixed_hex(&row.get::<String, _>("min_target")) {
                     Ok(v) => v,
                     Err(e) => {
-                        return Err(DBErrors::TupleAtrributeParsingError {
+                        return Err(DBErrors::TupleAttributeParsingError {
                             error: e.to_string(),
                             attribute: "min_target".to_string(),
                         })
@@ -336,7 +349,7 @@ pub async fn fetch_bead_by_bead_hash(
                 match CompactTarget::from_unprefixed_hex(&row.get::<String, _>("weak_target")) {
                     Ok(v) => v,
                     Err(e) => {
-                        return Err(DBErrors::TupleAtrributeParsingError {
+                        return Err(DBErrors::TupleAttributeParsingError {
                             error: e.to_string(),
                             attribute: "weak_target".to_string(),
                         })
@@ -345,7 +358,7 @@ pub async fn fetch_bead_by_bead_hash(
             let extra_nonce = match i32::from_str_radix(&row.get::<String, _>("extra_nonce"), 16) {
                 Ok(v) => v,
                 Err(e) => {
-                    return Err(DBErrors::TupleAtrributeParsingError {
+                    return Err(DBErrors::TupleAttributeParsingError {
                         error: e.to_string(),
                         attribute: "extra_nonce".to_string(),
                     })
@@ -357,7 +370,7 @@ pub async fn fetch_bead_by_bead_hash(
                 ) {
                     Ok(val) => val,
                     Err(error) => {
-                        return Err(DBErrors::TupleAtrributeParsingError {
+                        return Err(DBErrors::TupleAttributeParsingError {
                             error: error.to_string(),
                             attribute: "startTimestamp".to_string(),
                         })
@@ -370,7 +383,7 @@ pub async fn fetch_bead_by_bead_hash(
             let signature = match Signature::from_str(row.get::<String, _>("signature").as_str()) {
                 Ok(v) => v,
                 Err(e) => {
-                    return Err(DBErrors::TupleAtrributeParsingError {
+                    return Err(DBErrors::TupleAttributeParsingError {
                         error: e.to_string(),
                         attribute: "signature".to_string(),
                     })
@@ -383,7 +396,7 @@ pub async fn fetch_bead_by_bead_hash(
                 ) {
                     Ok(val) => val,
                     Err(error) => {
-                        return Err(DBErrors::TupleAtrributeParsingError {
+                        return Err(DBErrors::TupleAttributeParsingError {
                             error: error.to_string(),
                             attribute: "broadcastTimestamp".to_string(),
                         })
@@ -438,7 +451,7 @@ pub async fn fetch_bead_by_bead_hash(
         for tx_row in rows {
             let _txid = tx_row.get::<String, _>("txid");
             let bead_id = tx_row.get::<u64, _>("bead_id");
-            let indexed_bead = braid_data.beads.get((bead_id - 1) as usize).unwrap();
+            let indexed_bead = braid_data.beads.get((bead_id) as usize).unwrap();
             bead_txs.extend(
                 indexed_bead
                     .committed_metadata
@@ -473,6 +486,7 @@ pub async fn fetch_bead_by_bead_hash(
 #[allow(unused)]
 pub mod test {
     use super::*;
+    use serde_json::json;
     use sqlx::{sqlite::SqliteConnectOptions, SqlitePool};
     use std::{fs, str::FromStr};
     const TEST_DB_URL: &str = "sqlite::memory:";
@@ -535,55 +549,44 @@ pub mod test {
         for bead_tx in test_bead.committed_metadata.transactions.iter() {
             transaction_tuples.push(((*bead_id as u64), bead_tx.compute_txid().to_string()));
         }
+        //Inserting dummy test transaction
+        transaction_tuples.push((
+            0,
+            "55089847fc2828db9e7ab0691e618db57784e8808bb589fd2fe1d276a922b454".to_string(),
+        ));
         let transactions_values = transaction_tuples
             .iter()
-            .map(|t| format!("(last_insert_rowid(), '{}')", t.1))
-            .collect::<Vec<_>>()
-            .join(", ");
+            .map(|t| {
+                json!({
+                    "txid":t.1,
+                    "bead_id":t.0
+                })
+            })
+            .collect::<Vec<_>>();
         let parent_timestamps_values = parent_timestamp_tuples
             .iter()
-            .map(|p| format!("({}, {}, {})", p.0, p.1, p.2))
-            .collect::<Vec<_>>()
-            .join(", ");
+            .map(|p| {
+                json!({
+                    "child":p.1,
+                    "parent":p.0,
+                    "timestamp":p.2
+                })
+            })
+            .collect::<Vec<_>>();
 
         let relatives_values = relative_tuples
             .iter()
-            .map(|r| format!("({}, {})", r.1, r.0))
-            .collect::<Vec<_>>()
-            .join(", ");
+            .map(|r| {
+                json!({
+                    "parent":r.1,
+                    "child":r.0
+                })
+            })
+            .collect::<Vec<_>>();
 
-        let sub_query_1 = "
-            BEGIN TRANSACTION;
-            INSERT INTO bead (
-                id,hash, nVersion, hashPrevBlock, hashMerkleRoot, nTime, 
-                nBits, nNonce, payout_address, start_timestamp, comm_pub_key,
-                min_target, weak_target, miner_ip, extra_nonce, 
-                broadcast_timestamp, signature
-            ) VALUES (?,?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
-    ";
-        let mut sub_query_2 = String::new();
-        let mut sub_query_3 = String::new();
-        let mut sub_query_4 = String::new();
-
-        if !transactions_values.is_empty() {
-            sub_query_2 = format!(
-                "INSERT INTO Transactions (bead_id, txid) VALUES {transactions_values};
-                        "
-            );
-        }
-        if !relatives_values.is_empty() {
-            sub_query_3 =
-                format!("INSERT INTO Relatives (child, parent) VALUES {relatives_values};");
-        }
-        if !parent_timestamps_values.is_empty() {
-            sub_query_4 = format!(
-            "INSERT INTO ParentTimestamps (parent, child, timestamp) VALUES {parent_timestamps_values};"
-        );
-        }
-        let sql_query = format!(
-            "{}{}{}{} COMMIT;",
-            sub_query_1, sub_query_2, sub_query_3, sub_query_4
-        );
+        let test_tx_json = serde_json::to_string(&transactions_values).unwrap();
+        let test_relative_json = serde_json::to_string(&relatives_values).unwrap();
+        let test_parent_timestamp_json = serde_json::to_string(&parent_timestamps_values).unwrap();
         let hex_converted_version =
             hex::encode(test_bead.block_header.version.to_consensus().to_be_bytes());
         let hex_converted_nonce = hex::encode(test_bead.block_header.nonce.to_be_bytes());
@@ -592,7 +595,7 @@ pub mod test {
         let hex_converted_extranonce =
             hex::encode(test_bead.uncommitted_metadata.extra_nonce.to_be_bytes());
         //All fields are in be format
-        if let Err(e) = sqlx::query(&sql_query)
+        if let Err(e) = sqlx::query(&INSERT_QUERY)
             .bind(*bead_id as i64)
             .bind(test_bead.block_header.block_hash().to_string())
             .bind(hex_converted_version)
@@ -616,6 +619,9 @@ pub mod test {
                     .to_string(),
             )
             .bind(test_bead.uncommitted_metadata.signature.to_string())
+            .bind(test_tx_json)
+            .bind(test_relative_json)
+            .bind(test_parent_timestamp_json)
             .execute(&test_conn)
             .await
         {

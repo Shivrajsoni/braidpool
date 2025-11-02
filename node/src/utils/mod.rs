@@ -51,8 +51,8 @@ pub fn create_test_bead(nonce: u32, prev_hash: Option<BlockHash>) -> Bead {
     if let Some(hash) = prev_hash {
         parent_hash_set.insert(hash);
     }
-    let weak_target = CompactTarget::from_consensus(32);
-    let min_target = CompactTarget::from_consensus(1);
+    let weak_target = CompactTarget::from_consensus(486604799);
+    let min_target = CompactTarget::from_consensus(486604799);
     let time_val = Time::from_consensus(1653195600).unwrap();
     let test_committed_metadata: CommittedMetadata = CommittedMetadata {
         comm_pub_key: public_key,
@@ -80,7 +80,7 @@ pub fn create_test_bead(nonce: u32, prev_hash: Option<BlockHash>) -> Bead {
     let test_block_header = BlockHeader {
         version: BlockVersion::TWO,
         prev_blockhash: prev_hash.unwrap_or(BlockHash::from_byte_array(test_bytes)),
-        bits: CompactTarget::from_consensus(32),
+        bits: CompactTarget::from_consensus(486604799),
         nonce: nonce,
         time: BlockTime::from_u32(8328429),
         merkle_root: TxMerkleNode::from_byte_array(test_bytes),
