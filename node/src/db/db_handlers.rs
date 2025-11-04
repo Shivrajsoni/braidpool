@@ -11,8 +11,8 @@ use crate::{
     error::DBErrors,
 };
 use bitcoin::{
-    ecdsa::Signature, pow::CompactTargetExt, BlockHash, BlockTime, BlockVersion, CompactTarget,
-    PublicKey, Transaction, TxMerkleNode,
+    absolute::MedianTimePast, ecdsa::Signature, pow::CompactTargetExt, BlockHash, BlockTime,
+    BlockVersion, CompactTarget, PublicKey, TxMerkleNode, Txid,
 };
 use futures::lock::Mutex;
 use num::ToPrimitive;
@@ -117,8 +117,8 @@ impl DBHandler {
                 current_parent_timestamp.to_u32().to_u64().unwrap(),
             ));
         }
-        for bead_tx in bead.committed_metadata.transactions.iter() {
-            transaction_tuples.push(((*bead_id as u64), bead_tx.compute_txid().to_string()));
+        for bead_tx in bead.committed_metadata.transaction_ids.0.iter() {
+            transaction_tuples.push(((*bead_id as u64), bead_tx.to_string()));
         }
         //Constructing json bindings
         let transactions_values = transaction_tuples
@@ -157,9 +157,10 @@ impl DBHandler {
             hex::encode(bead.block_header.version.to_consensus().to_be_bytes());
         let hex_converted_nonce = hex::encode(bead.block_header.nonce.to_be_bytes());
         let hex_converted_ntime = hex::encode(bead.block_header.time.to_u32().to_be_bytes());
-        #[allow(unused)]
-        let hex_converted_extranonce =
-            hex::encode(bead.uncommitted_metadata.extra_nonce.to_be_bytes());
+        let hex_converted_extranonce_1 =
+            hex::encode(bead.uncommitted_metadata.extra_nonce_1.to_be_bytes());
+        let hex_converted_extranonce_2 =
+            hex::encode(bead.uncommitted_metadata.extra_nonce_2.to_be_bytes());
         //All fields are in be format
         if let Err(e) = sqlx::query(&INSERT_QUERY)
             .bind(*bead_id as i64)
@@ -177,7 +178,8 @@ impl DBHandler {
             .bind(bead.committed_metadata.weak_target.to_hex())
             .bind(bead.committed_metadata.miner_ip)
             //TODO: Placeholder till splitting of `uncomitted_metadata` extranonce to extranonce1 + extranonce2
-            .bind("0101010101010101".to_string())
+            .bind(hex_converted_extranonce_1.to_string())
+            .bind(hex_converted_extranonce_2)
             .bind(bead.uncommitted_metadata.broadcast_timestamp.to_string())
             .bind(bead.uncommitted_metadata.signature.to_string())
             .bind(txs_json)
@@ -264,10 +266,8 @@ impl DBHandler {
 pub async fn fetch_bead_by_bead_hash(
     db_connection_arc: Arc<Mutex<Pool<Sqlite>>>,
     bead_hash: BlockHash,
-    local_braid_arc: Arc<RwLock<Braid>>,
 ) -> Result<Option<Bead>, DBErrors> {
     let mut bead_id = -1;
-    let braid_data = local_braid_arc.read().await;
     let mut fetched_bead: Bead = Bead::default();
     match sqlx::query("SELECT * FROM bead WHERE hash = ?")
         .bind(bead_hash.to_string())
@@ -355,15 +355,26 @@ pub async fn fetch_bead_by_bead_hash(
                         })
                     }
                 };
-            let extra_nonce = match i32::from_str_radix(&row.get::<String, _>("extra_nonce"), 16) {
-                Ok(v) => v,
-                Err(e) => {
-                    return Err(DBErrors::TupleAttributeParsingError {
-                        error: e.to_string(),
-                        attribute: "extra_nonce".to_string(),
-                    })
-                }
-            };
+            let extra_nonce_1 =
+                match i32::from_str_radix(&row.get::<String, _>("extra_nonce_1"), 16) {
+                    Ok(v) => v,
+                    Err(e) => {
+                        return Err(DBErrors::TupleAttributeParsingError {
+                            error: e.to_string(),
+                            attribute: "extra_nonce_1".to_string(),
+                        })
+                    }
+                };
+            let extra_nonce_2 =
+                match i32::from_str_radix(&row.get::<String, _>("extra_nonce_2"), 16) {
+                    Ok(v) => v,
+                    Err(e) => {
+                        return Err(DBErrors::TupleAttributeParsingError {
+                            error: e.to_string(),
+                            attribute: "extra_nonce_2".to_string(),
+                        })
+                    }
+                };
             let start_timestamp =
                 match bitcoin::blockdata::locktime::absolute::MedianTimePast::from_u32(
                     row.get::<u32, _>("start_timestamp"),
@@ -411,7 +422,8 @@ pub async fn fetch_bead_by_bead_hash(
             fetched_bead.block_header.time = time;
             fetched_bead.block_header.version = version;
             fetched_bead.uncommitted_metadata.signature = signature;
-            fetched_bead.uncommitted_metadata.extra_nonce = extra_nonce;
+            fetched_bead.uncommitted_metadata.extra_nonce_1 = extra_nonce_1;
+            fetched_bead.uncommitted_metadata.extra_nonce_2 = extra_nonce_2;
             fetched_bead.uncommitted_metadata.broadcast_timestamp = broadcast_timestamp;
             fetched_bead.committed_metadata.comm_pub_key = comm_pub_key;
             fetched_bead.committed_metadata.min_target = min_target;
@@ -434,8 +446,8 @@ pub async fn fetch_bead_by_bead_hash(
             });
         }
     };
-    let mut bead_txs: Vec<Transaction> = Vec::new();
     if bead_id != -1 {
+        //Fetching transactions from DB
         let rows = match sqlx::query("SELECT  txid,bead_id FROM Transactions WHERE bead_id = ?")
             .bind(bead_id)
             .fetch_all(&db_connection_arc.lock().await.clone())
@@ -448,34 +460,62 @@ pub async fn fetch_bead_by_bead_hash(
                 });
             }
         };
-        for tx_row in rows {
-            let _txid = tx_row.get::<String, _>("txid");
-            let bead_id = tx_row.get::<u64, _>("bead_id");
-            let indexed_bead = braid_data.beads.get((bead_id) as usize).unwrap();
-            bead_txs.extend(
-                indexed_bead
-                    .committed_metadata
-                    .transactions
-                    .clone()
-                    .into_iter(),
-            );
-            fetched_bead
-                .committed_metadata
-                .parents
-                .extend(indexed_bead.committed_metadata.parents.clone().into_iter());
+        //Fetching parent timestamps from DB
+        let parent_timestamp_rows = match sqlx::query(
+            "SELECT  parent,child,timestamp FROM ParentTimestamps WHERE child = ?",
+        )
+        .bind(bead_id)
+        .fetch_all(&db_connection_arc.lock().await.clone())
+        .await
+        {
+            Ok(rows) => rows,
+            Err(error) => {
+                return Err(DBErrors::TupleNotFetched {
+                    error: error.to_string(),
+                });
+            }
+        };
+        for parent_beads in parent_timestamp_rows {
+            let parent_timestamp = parent_beads.get::<i32, _>("timestamp");
+            let parent_bead_id = parent_beads.get::<i64, _>("parent");
+            //Fetching parent_bead from DB
+            let parent_bead_hash_str = match sqlx::query("SELECT  hash FROM Beads WHERE id = ?")
+                .bind(parent_bead_id)
+                .fetch_one(&db_connection_arc.lock().await.clone())
+                .await
+            {
+                Ok(bead_tuple) => bead_tuple.get::<String, _>("hash"),
+                Err(error) => {
+                    return Err(DBErrors::TupleNotFetched {
+                        error: error.to_string(),
+                    });
+                }
+            };
+            let mut parent_hash_raw_bytes: [u8; 32] = [0u8; 32];
+            let _parent_decode_res =
+                hex::decode_to_slice(parent_bead_hash_str, &mut parent_hash_raw_bytes);
+            //Extending parent bead timestamp
             fetched_bead
                 .committed_metadata
                 .parent_bead_timestamps
                 .0
-                .extend(
-                    indexed_bead
-                        .committed_metadata
-                        .parent_bead_timestamps
-                        .clone()
-                        .0
-                        .into_iter(),
-                );
-            break;
+                .push(MedianTimePast::from_u32(parent_timestamp as u32).unwrap());
+            //Extending parent committment by parent hash
+            fetched_bead
+                .committed_metadata
+                .parents
+                .insert(BlockHash::from_byte_array(parent_hash_raw_bytes));
+        }
+        for tx_row in rows {
+            let _txid = tx_row.get::<String, _>("txid");
+            let mut txid_raw_bytes: [u8; 32] = [0u8; 32];
+
+            let _decode_res = hex::decode_to_slice(_txid, &mut txid_raw_bytes);
+            fetched_bead
+                .committed_metadata
+                .transaction_ids
+                .0
+                .push(Txid::from_byte_array(txid_raw_bytes));
         }
     } else {
         return Ok(None);
@@ -546,8 +586,8 @@ pub mod test {
                 current_parent_timestamp.to_u32().to_u64().unwrap(),
             ));
         }
-        for bead_tx in test_bead.committed_metadata.transactions.iter() {
-            transaction_tuples.push(((*bead_id as u64), bead_tx.compute_txid().to_string()));
+        for bead_tx in test_bead.committed_metadata.transaction_ids.0.iter() {
+            transaction_tuples.push(((*bead_id as u64), bead_tx.to_string()));
         }
         //Inserting dummy test transaction
         transaction_tuples.push((
@@ -591,9 +631,10 @@ pub mod test {
             hex::encode(test_bead.block_header.version.to_consensus().to_be_bytes());
         let hex_converted_nonce = hex::encode(test_bead.block_header.nonce.to_be_bytes());
         let hex_converted_ntime = hex::encode(test_bead.block_header.time.to_u32().to_be_bytes());
-        #[allow(unused)]
-        let hex_converted_extranonce =
-            hex::encode(test_bead.uncommitted_metadata.extra_nonce.to_be_bytes());
+        let hex_converted_extranonce_1 =
+            hex::encode(test_bead.uncommitted_metadata.extra_nonce_1.to_be_bytes());
+        let hex_converted_extranonce_2 =
+            hex::encode(test_bead.uncommitted_metadata.extra_nonce_2.to_be_bytes());
         //All fields are in be format
         if let Err(e) = sqlx::query(&INSERT_QUERY)
             .bind(*bead_id as i64)
@@ -611,7 +652,8 @@ pub mod test {
             .bind(test_bead.committed_metadata.weak_target.to_hex())
             .bind(test_bead.committed_metadata.miner_ip)
             //TODO: Placeholder till splitting of `uncomitted_metadata` extranonce to extranonce1 + extranonce2
-            .bind("0000000000000000".to_string())
+            .bind(hex_converted_extranonce_1.to_string())
+            .bind(hex_converted_extranonce_2)
             .bind(
                 test_bead
                     .uncommitted_metadata
@@ -677,14 +719,11 @@ pub mod test {
         let test_braid: Arc<RwLock<braid::Braid>> =
             Arc::new(RwLock::new(braid::Braid::new(genesis_beads)));
         let res = insert_bead(pool.clone(), test_braid.clone()).await;
-        let fetched_bead = fetch_bead_by_bead_hash(
-            Arc::new(Mutex::new(pool)),
-            res.clone().unwrap(),
-            test_braid.clone(),
-        )
-        .await
-        .unwrap()
-        .unwrap();
+        let fetched_bead =
+            fetch_bead_by_bead_hash(Arc::new(Mutex::new(pool)), res.clone().unwrap())
+                .await
+                .unwrap()
+                .unwrap();
         assert_eq!(
             fetched_bead.block_header.block_hash().to_string(),
             res.unwrap().to_string()

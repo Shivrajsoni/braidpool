@@ -18,6 +18,8 @@ pub use bitcoin::{absolute::Time, p2p::address::AddrV2, PublicKey, Transaction};
 pub mod test_utility_functions {
     use std::{collections::HashSet, str::FromStr};
 
+    #[cfg(test)]
+    use bitcoin::Txid;
     use bitcoin::{
         pow::CompactTargetExt, BlockHash, BlockTime, BlockVersion, CompactTarget, EcdsaSighashType,
         TxMerkleNode,
@@ -27,7 +29,8 @@ pub mod test_utility_functions {
 
     pub use super::*;
     pub struct TestUnCommittedMetadataBuilder {
-        extra_nonce: i32,
+        extra_nonce_1: i32,
+        extra_nonce_2: i32,
         broadcast_timestamp: Option<Time>,
         signature: Option<Signature>,
     }
@@ -36,14 +39,16 @@ pub mod test_utility_functions {
     impl TestUnCommittedMetadataBuilder {
         pub fn new() -> Self {
             Self {
-                extra_nonce: 0,
+                extra_nonce_1: 0,
+                extra_nonce_2: 0,
                 broadcast_timestamp: None,
                 signature: None,
             }
         }
 
-        pub fn extra_nonce(mut self, nonce: i32) -> Self {
-            self.extra_nonce = nonce;
+        pub fn extra_nonce(mut self, nonce_1: i32, nonce_2: i32) -> Self {
+            self.extra_nonce_1 = nonce_1;
+            self.extra_nonce_2 = nonce_2;
             self
         }
 
@@ -59,7 +64,8 @@ pub mod test_utility_functions {
 
         pub fn build(self) -> UnCommittedMetadata {
             UnCommittedMetadata {
-                extra_nonce: self.extra_nonce,
+                extra_nonce_1: self.extra_nonce_1,
+                extra_nonce_2: self.extra_nonce_2,
                 broadcast_timestamp: self
                     .broadcast_timestamp
                     .expect("broadcast_timestamp is required"),
@@ -69,7 +75,7 @@ pub mod test_utility_functions {
     }
     #[cfg(test)]
     pub struct TestCommittedMetadataBuilder {
-        transactions: Vec<Transaction>,
+        transaction_ids: Vec<Txid>,
         parents: std::collections::HashSet<BeadHash>,
         parent_bead_timestamps: Option<TimeVec>,
         payout_address: Option<String>,
@@ -84,7 +90,7 @@ pub mod test_utility_functions {
     impl TestCommittedMetadataBuilder {
         pub fn new() -> Self {
             Self {
-                transactions: Vec::new(),
+                transaction_ids: Vec::new(),
                 parents: HashSet::new(),
                 parent_bead_timestamps: None,
                 payout_address: None,
@@ -96,8 +102,8 @@ pub mod test_utility_functions {
             }
         }
 
-        pub fn transactions(mut self, txs: Vec<Transaction>) -> Self {
-            self.transactions = txs;
+        pub fn transactions(mut self, txs: Vec<Txid>) -> Self {
+            self.transaction_ids = txs;
             self
         }
 
@@ -139,8 +145,10 @@ pub mod test_utility_functions {
             self
         }
         pub fn build(self) -> CommittedMetadata {
+            use crate::committed_metadata::TxIdVec;
+
             CommittedMetadata {
-                transactions: self.transactions,
+                transaction_ids: TxIdVec(self.transaction_ids),
                 parents: self.parents,
                 parent_bead_timestamps: self
                     .parent_bead_timestamps
@@ -242,7 +250,9 @@ pub mod test_utility_functions {
             .transactions(vec![])
             .build();
 
-        let extra_nonce = rand::random::<i32>();
+        let extra_nonce_1 = rand::random::<i32>();
+        let extra_nonce_2 = rand::random::<i32>();
+
         let secp = Secp256k1::new();
 
         // Generate random secret key
@@ -268,7 +278,7 @@ pub mod test_utility_functions {
 
         let uncommitted_metadata = TestUnCommittedMetadataBuilder::new()
             .broadcast_timestamp(time_val)
-            .extra_nonce(extra_nonce)
+            .extra_nonce(extra_nonce_1, extra_nonce_2)
             .signature(sig)
             .build();
         let bytes: [u8; 32] = [0u8; 32];

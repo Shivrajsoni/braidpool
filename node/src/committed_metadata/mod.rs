@@ -7,7 +7,7 @@ use bitcoin::consensus::Error;
 use bitcoin::io::{self, BufRead, Write};
 use bitcoin::CompactTarget;
 use bitcoin::PublicKey;
-use bitcoin::Transaction;
+use bitcoin::Txid;
 use serde::Deserialize;
 use serde::Serialize;
 use std::collections::HashSet;
@@ -19,7 +19,6 @@ pub struct TimeVec(pub Vec<Time>);
 impl Encodable for TimeVec {
     fn consensus_encode<W: Write + ?Sized>(&self, w: &mut W) -> Result<usize, io::Error> {
         let mut len = 0;
-        // Encode the length for deterministic encoding
         len += (self.0.len() as u64).consensus_encode(w)?;
         for time in &self.0 {
             len += time.to_consensus_u32().consensus_encode(w)?;
@@ -40,11 +39,34 @@ impl Decodable for TimeVec {
         Ok(TimeVec(vec))
     }
 }
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, Default)]
+pub struct TxIdVec(pub Vec<Txid>);
+impl Encodable for TxIdVec {
+    fn consensus_encode<W: Write + ?Sized>(&self, w: &mut W) -> Result<usize, io::Error> {
+        let mut len = 0;
+        len += (self.0.len() as u64).consensus_encode(w)?;
+        for txid in &self.0 {
+            len += txid.consensus_encode(w)?;
+        }
+        Ok(len)
+    }
+}
+impl Decodable for TxIdVec {
+    fn consensus_decode<R: BufRead + ?Sized>(r: &mut R) -> Result<Self, Error> {
+        let len = u64::consensus_decode(r)? as usize;
+        let mut vec = Vec::with_capacity(len);
+        for _ in 0..len {
+            vec.push(Txid::consensus_decode(r)?);
+        }
+        Ok(Self(vec))
+    }
+}
+
 //Changing the existing atrributes type mapping for inherit implementation of serializable and
 //deserializable trait
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct CommittedMetadata {
-    pub transactions: Vec<Transaction>,
+    pub transaction_ids: TxIdVec,
     pub parents: HashSet<BeadHash>,
     pub parent_bead_timestamps: TimeVec,
     pub payout_address: String,
@@ -60,7 +82,7 @@ pub struct CommittedMetadata {
 impl Default for CommittedMetadata {
     fn default() -> Self {
         Self {
-            transactions: Vec::new(),
+            transaction_ids: TxIdVec(Vec::new()),
             parents: HashSet::new(),
             parent_bead_timestamps: TimeVec(Vec::new()),
             payout_address: "bc1".to_string(),
@@ -78,7 +100,7 @@ impl Default for CommittedMetadata {
 impl Encodable for CommittedMetadata {
     fn consensus_encode<W: Write + ?Sized>(&self, w: &mut W) -> Result<usize, io::Error> {
         let mut len = 0;
-        len += self.transactions.consensus_encode(w)?;
+        len += self.transaction_ids.consensus_encode(w)?;
         len += hashset_to_vec_deterministic(&self.parents).consensus_encode(w)?;
         len += self.parent_bead_timestamps.consensus_encode(w)?;
         len += self.payout_address.consensus_encode(w)?;
@@ -97,8 +119,8 @@ impl Encodable for CommittedMetadata {
 
 impl Decodable for CommittedMetadata {
     fn consensus_decode<R: BufRead + ?Sized>(r: &mut R) -> Result<Self, Error> {
-        let transactions = Vec::<Transaction>::consensus_decode(r)?;
         let parents = vec_to_hashset(Vec::<BeadHash>::consensus_decode(r)?);
+        let transaction_ids = TxIdVec::consensus_decode(r)?;
         let parent_bead_timestamps = TimeVec::consensus_decode(r)?;
         let payout_address = String::consensus_decode(r)?;
         let start_timestamp = Time::from_consensus(u32::consensus_decode(r).unwrap()).unwrap();
@@ -107,7 +129,7 @@ impl Decodable for CommittedMetadata {
         let weak_target = CompactTarget::consensus_decode(r).unwrap();
         let miner_ip = String::consensus_decode(r)?;
         Ok(CommittedMetadata {
-            transactions,
+            transaction_ids,
             parents,
             parent_bead_timestamps,
             payout_address,

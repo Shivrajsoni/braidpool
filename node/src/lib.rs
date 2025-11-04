@@ -1,7 +1,7 @@
 //These implementations must be defined under lib.rs as they are required for intergration tests
 use bitcoin::{
     consensus::encode::deserialize, ecdsa::Signature, pow::CompactTargetExt, BlockHash,
-    CompactTarget, EcdsaSighashType,
+    CompactTarget, EcdsaSighashType, Txid,
 };
 use num::ToPrimitive;
 use std::{
@@ -17,7 +17,7 @@ use tokio::sync::mpsc::{self, Receiver, Sender};
 use crate::{
     bead::Bead,
     braid::Braid,
-    committed_metadata::{CommittedMetadata, TimeVec},
+    committed_metadata::{CommittedMetadata, TimeVec, TxIdVec},
     db::BraidpoolDBTypes,
     error::{IPCtemplateError, StratumErrors},
     stratum::{BlockTemplate, NotifyCmd},
@@ -273,9 +273,14 @@ impl SwarmHandler {
         job_sent_timestamp: u32,
         downstream_payout_addr: &str,
         //TODO: Will be used as seperate entity after altering `uncommitted_metadata`
-        #[allow(unused)] extranonce_1_raw_value: String,
+        extranonce_1_raw_value: i32,
     ) -> Result<(), StratumErrors> {
         let (candidate_block_header, candidate_block_transactions) = candidate_block.into_parts();
+        let ids: Vec<Txid> = candidate_block_transactions
+            .iter()
+            .map(|tx| tx.compute_txid())
+            .collect();
+        let mut transaction_ids: Vec<Txid> = Vec::from(ids);
         log::info!("Received command for broadcasting bead via floodsub");
         //TODO:Currently temprorary placeholder will be replaced in upcoming PRs
         let public_key = "020202020202020202020202020202020202020202020202020202020202020202"
@@ -307,7 +312,7 @@ impl SwarmHandler {
                 .unwrap();
         let candidate_block_bead_committed_metadata = CommittedMetadata {
             comm_pub_key: public_key,
-            transactions: candidate_block_transactions,
+            transaction_ids: TxIdVec(transaction_ids),
             parents: parent_hash_set,
             parent_bead_timestamps: time_hash_set,
             payout_address: downstream_payout_addr.to_string(),
@@ -340,7 +345,8 @@ impl SwarmHandler {
                 unix_timestamp,
             )
             .unwrap(),
-            extra_nonce: extranonce_2_raw_value,
+            extra_nonce_1: extranonce_1_raw_value,
+            extra_nonce_2: extranonce_2_raw_value,
             signature: sig,
         };
         let weak_share = Bead {

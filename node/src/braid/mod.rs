@@ -1,12 +1,11 @@
 use crate::bead::Bead;
 use crate::utils::{retrieve_bead, BeadHash};
 use num::BigUint;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::cmp::Ordering;
 use std::collections::VecDeque;
 use std::collections::{HashMap, HashSet};
-#[derive(Clone, Debug, Serialize, PartialEq)]
-
+#[derive(Clone, Debug, Serialize, PartialEq, Deserialize)]
 pub struct Cohort(pub HashSet<usize>);
 #[derive(Debug, Clone)]
 pub enum AddBeadStatus {
@@ -23,7 +22,7 @@ pub enum GenesisCheckStatus {
     GenesisBeadsCountMismatch,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 
 pub struct Braid {
     pub beads: Vec<Bead>,

@@ -77,7 +77,7 @@ fn test_serialized_uncommitted_metadata() {
     let extra_nonce = 42;
     let test_uncommitted_metadata = TestUnCommittedMetadataBuilder::new()
         .broadcast_timestamp(time_val)
-        .extra_nonce(extra_nonce)
+        .extra_nonce(extra_nonce, extra_nonce)
         .signature(sig)
         .build();
     let serialized_val = serialize(&test_uncommitted_metadata);
@@ -127,7 +127,7 @@ fn test_serialized_bead() {
     };
     let test_uncommitted_metadata = TestUnCommittedMetadataBuilder::new()
         .broadcast_timestamp(time_val)
-        .extra_nonce(extra_nonce)
+        .extra_nonce(extra_nonce, extra_nonce)
         .signature(sig)
         .build();
     let test_bytes: [u8; 32] = [0u8; 32];
@@ -201,7 +201,7 @@ fn test_bead_response_serialization() {
     };
     let test_uncommitted_metadata = TestUnCommittedMetadataBuilder::new()
         .broadcast_timestamp(time_val)
-        .extra_nonce(extra_nonce)
+        .extra_nonce(extra_nonce, extra_nonce)
         .signature(sig)
         .build();
     let test_bytes: [u8; 32] = [0u8; 32];

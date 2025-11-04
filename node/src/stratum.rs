@@ -650,8 +650,10 @@ impl DownstreamClient {
                 });
             }
         }
+        //Passing both the extranonces for committment in uncommitted metadata
         let extranonce_2_raw_value = i32::from_str_radix(extranonce2, 16).unwrap();
         let extranonce_1_hex_str = hex::encode(self.extranonce1.clone());
+        let extranonce_1_raw_value = i32::from_str_radix(&extranonce_1_hex_str, 16).unwrap();
         let _swarm_command_sent = match swarm_handler
             .lock()
             .await
@@ -661,7 +663,7 @@ impl DownstreamClient {
                 &self.downstream_ip,
                 submitted_job.job_sent_time,
                 worker_name,
-                extranonce_1_hex_str,
+                extranonce_1_raw_value,
             )
             .await
         {
