@@ -2,6 +2,7 @@
 use crate::config::CoinbaseConfig;
 use crate::error::CoinbaseError;
 use crate::error::{classify_error, ErrorKind};
+use crate::MAX_CACHED_TEMPLATES;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::mpsc::Sender;
@@ -272,7 +273,7 @@ pub async fn ipc_block_listener(
                                 - Cache overflow (old template was evicted)",
                                 submission.template_id,
                                 template_cache.lock().await.len(),
-                                90,
+                                MAX_CACHED_TEMPLATES,
                            );
                         }
                     }

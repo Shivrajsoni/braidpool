@@ -86,6 +86,14 @@ pub const EXTRANONCE2_SIZE: usize = 4;
 /// can be changed accordingly as per discussion .
 pub const EXTRANONCE_SEPARATOR: [u8; EXTRANONCE1_SIZE + EXTRANONCE2_SIZE] =
     [1u8; EXTRANONCE1_SIZE + EXTRANONCE2_SIZE];
+
+/// **Maximum number of block templates to retain in the in-memory cache.**
+///
+/// This constant limits how many recent block templates, fetched via IPC from Bitcoin node,
+/// are kept available for downstream miners. When the cache exceeds this size, the oldest
+/// templates are evicted to make room for new ones. This helps prevent unbounded memory
+/// growth and ensures efficient resource usage.
+pub const MAX_CACHED_TEMPLATES: usize = 90;
 /// Consumes block templates received via an IPC channel, updates shared state,
 /// and notifies all connected consumers.
 ///
@@ -116,14 +124,6 @@ pub async fn ipc_template_consumer(
     >,
     latest_template_id: Arc<Mutex<String>>,
 ) -> Result<(), IPCtemplateError> {
-    /// Maximum number of block templates to retain in the in-memory cache.
-    ///
-    /// This constant limits how many recent block templates, fetched via IPC from Bitcoin node,
-    /// are kept available for downstream miners. When the cache exceeds this size, the oldest
-    /// templates are evicted to make room for new ones. This helps prevent unbounded memory
-    /// growth and ensures efficient resource usage.
-    const MAX_CACHED_TEMPLATES: usize = 90;
-
     while let Some(ipc_template) = template_rx.recv().await {
         let template_bytes = match &ipc_template.processed_block_hex {
             Some(processed_hex) if !processed_hex.is_empty() => processed_hex,
