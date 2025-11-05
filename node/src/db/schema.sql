@@ -17,7 +17,8 @@ CREATE TABLE Bead (
     weak_target         INTEGER CHECK (weak_target >= 0 AND weak_target < 0x100000000),
     miner_ip            TEXT NOT NULL,
     -- UnCommitted Metadata
-    extra_nonce         TEXT NOT NULL,
+    extranonce1         TEXT NOT NULL,
+    extranonce2         TEXT NOT NULL,
     broadcast_timestamp INTEGER NOT NULL,       -- 64-bit unix epoch in MICROseconds
     signature           BLOB NOT NULL,
     -- Constraints

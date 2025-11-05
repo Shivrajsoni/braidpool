@@ -651,9 +651,9 @@ impl DownstreamClient {
             }
         }
         //Passing both the extranonces for committment in uncommitted metadata
-        let extranonce_2_raw_value = i32::from_str_radix(extranonce2, 16).unwrap();
+        let extranonce_2_raw_value = u32::from_str_radix(extranonce2, 16).unwrap();
         let extranonce_1_hex_str = hex::encode(self.extranonce1.clone());
-        let extranonce_1_raw_value = i32::from_str_radix(&extranonce_1_hex_str, 16).unwrap();
+        let extranonce_1_raw_value = u32::from_str_radix(&extranonce_1_hex_str, 16).unwrap();
         let _swarm_command_sent = match swarm_handler
             .lock()
             .await

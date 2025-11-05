@@ -2,6 +2,7 @@ use sqlx::{sqlite::SqliteConnectOptions, Executor, SqlitePool};
 use std::{env, fs, path::Path, str::FromStr};
 
 use crate::error::DBErrors;
+static SCHEMA_SQL: &str = include_str!("schema.sql");
 
 pub async fn init_db() -> Result<SqlitePool, DBErrors> {
     //Fetching the home directory
@@ -17,19 +18,6 @@ pub async fn init_db() -> Result<SqlitePool, DBErrors> {
     let db_dir = Path::new(&home_dir).join(".braidpool");
     //Final db directory path
     let db_path = db_dir.join("braidpool.db");
-    //Schema path to be initialized after creating db directory
-    let schema_path = Path::new(&std::env::current_dir().unwrap()).join("src/db/schema.sql");
-    //Reading schema to string
-    let schema_sql = match fs::read_to_string(&schema_path.as_path()) {
-        Ok(schema_string) => schema_string,
-        Err(error) => {
-            return Err(DBErrors::SchemaPathNotFound {
-                error: error.to_string(),
-                schema_desired_path: schema_path,
-            });
-        }
-    };
-    log::info!("Schema path - {:?}", schema_path);
     //Creating db directory
     match fs::create_dir_all(&db_dir) {
         Ok(_) => {
@@ -81,7 +69,7 @@ pub async fn init_db() -> Result<SqlitePool, DBErrors> {
                 });
             }
         };
-        let _query_result = match pool.execute(schema_sql.as_str()).await {
+        let _query_result = match pool.execute(SCHEMA_SQL).await {
             Ok(_res) => {
                 log::info!("Schema initialized successfully at {:?}", db_path);
             }

@@ -171,7 +171,7 @@ pub async fn ipc_template_consumer(
 
             let merkle_branch_coinbase = ipc_template.components.coinbase_merkle_path.clone();
             let (template_header, template_transactions) = candidate_block.unwrap().into_parts();
-            let coinbase_transaction = template_transactions.get(0);
+            let _coinbase_transaction = template_transactions.get(0);
 
             // log::info!("Coinbase transaction is - {:?}", coinbase_transaction);
             log::debug!(
@@ -268,19 +268,19 @@ impl SwarmHandler {
     pub async fn propagate_valid_bead(
         &mut self,
         candidate_block: bitcoin::Block,
-        extranonce_2_raw_value: i32,
+        extranonce_2_raw_value: u32,
         downstream_client_ip: &str,
         job_sent_timestamp: u32,
         downstream_payout_addr: &str,
         //TODO: Will be used as seperate entity after altering `uncommitted_metadata`
-        extranonce_1_raw_value: i32,
+        extranonce_1_raw_value: u32,
     ) -> Result<(), StratumErrors> {
         let (candidate_block_header, candidate_block_transactions) = candidate_block.into_parts();
         let ids: Vec<Txid> = candidate_block_transactions
             .iter()
             .map(|tx| tx.compute_txid())
             .collect();
-        let mut transaction_ids: Vec<Txid> = Vec::from(ids);
+        let transaction_ids: Vec<Txid> = Vec::from(ids);
         log::info!("Received command for broadcasting bead via floodsub");
         //TODO:Currently temprorary placeholder will be replaced in upcoming PRs
         let public_key = "020202020202020202020202020202020202020202020202020202020202020202"

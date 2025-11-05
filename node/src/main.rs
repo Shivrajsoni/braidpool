@@ -20,7 +20,7 @@ use node::{
     behaviour::{self, BEAD_ANNOUNCE_PROTOCOL, BRAIDPOOL_TOPIC},
     braid, cli,
     db::db_handlers::DBHandler,
-    ipc, ipc_template_consumer,
+    ipc_template_consumer,
     peer_manager::PeerManager,
     rpc_server::{parse_arguments, run_rpc_server},
     setup_logging, setup_tracing,
@@ -89,7 +89,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let mut notifier: Notifier = Notifier::new(notification_rx, Arc::clone(&mining_job_map));
     //Stratum configuration initialization
     let stratum_config: StratumServerConfig = StratumServerConfig::default();
-    let (block_submission_tx, mut block_submission_rx) =
+    let (block_submission_tx, block_submission_rx) =
         tokio::sync::mpsc::unbounded_channel::<node::stratum::BlockSubmissionRequest>();
 
     //Initializing stratum server

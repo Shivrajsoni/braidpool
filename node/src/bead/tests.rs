@@ -22,6 +22,7 @@ use bitcoin::BlockVersion;
 use bitcoin::CompactTarget;
 use bitcoin::EcdsaSighashType;
 use bitcoin::TxMerkleNode;
+use bitcoin::Txid;
 use futures::executor::block_on;
 use libp2p::request_response::Codec;
 use std::collections::HashSet;
@@ -105,6 +106,9 @@ fn test_serialized_bead() {
     let socket = String::from("127.0.0.1");
     let time_hash_set = TimeVec(Vec::new());
     let parent_hash_set: HashSet<BlockHash> = HashSet::new();
+    //Adding test txid
+    let test_txid =
+        Txid::from_str("8df401c7580ea2491d88d936ed0e16f3e6ea6c3d69eb9d9cf27652696a559e24").unwrap();
     let weak_target = CompactTarget::from_consensus(32);
     let min_target = CompactTarget::from_consensus(1);
     let time_val = Time::from_consensus(1653195600).unwrap();
@@ -117,7 +121,7 @@ fn test_serialized_bead() {
         .payout_address(_address)
         .min_target(min_target)
         .weak_target(weak_target)
-        .transactions(vec![])
+        .transactions(vec![test_txid])
         .build();
     let extra_nonce = 42;
     let hex = "3046022100839c1fbc5304de944f697c9f4b1d01d1faeba32d751c0f7acb21ac8a0f436a72022100e89bd46bb3a5a62adc679f659b7ce876d83ee297c7a5587b2011c4fcc72eab45";

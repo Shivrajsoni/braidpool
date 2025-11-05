@@ -53,8 +53,8 @@ impl Encodable for TxIdVec {
 }
 impl Decodable for TxIdVec {
     fn consensus_decode<R: BufRead + ?Sized>(r: &mut R) -> Result<Self, Error> {
-        let len = u64::consensus_decode(r)? as usize;
-        let mut vec = Vec::with_capacity(len);
+        let len = u64::consensus_decode(r)?;
+        let mut vec = Vec::with_capacity(len as usize);
         for _ in 0..len {
             vec.push(Txid::consensus_decode(r)?);
         }
@@ -119,8 +119,8 @@ impl Encodable for CommittedMetadata {
 
 impl Decodable for CommittedMetadata {
     fn consensus_decode<R: BufRead + ?Sized>(r: &mut R) -> Result<Self, Error> {
-        let parents = vec_to_hashset(Vec::<BeadHash>::consensus_decode(r)?);
         let transaction_ids = TxIdVec::consensus_decode(r)?;
+        let parents = vec_to_hashset(Vec::<BeadHash>::consensus_decode(r)?);
         let parent_bead_timestamps = TimeVec::consensus_decode(r)?;
         let payout_address = String::consensus_decode(r)?;
         let start_timestamp = Time::from_consensus(u32::consensus_decode(r).unwrap()).unwrap();
