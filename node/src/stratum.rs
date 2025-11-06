@@ -465,12 +465,18 @@ impl DownstreamClient {
             extranonce2.to_ascii_lowercase(),
             submitted_job.coinbase2
         );
+        // CRASH RISK: hex::decode() with unwrap() will panic if coinbase_tx_hex contains invalid hex characters.
+        // This can happen if miner sends malformed extranonce or corrupted data, crashing entire server.
+        log::debug!("DEBUG: About to decode coinbase hex - potential crash point: {}", coinbase_tx_hex);
         let coinbase_bytes = hex::decode(coinbase_tx_hex).unwrap();
 
         // Log the coinbase transaction in hex
         log::info!("Coinbase transaction hex: {}", hex::encode(&coinbase_bytes));
 
         let mut coinbase_cursor = Cursor::new(coinbase_bytes);
+        // CRASH RISK: consensus_decode() with unwrap() will panic if coinbase transaction data is malformed
+        // or doesn't conform to Bitcoin transaction format. Can crash entire server if miner sends invalid data.
+        log::debug!("DEBUG: About to consensus decode coinbase transaction - potential crash point");
         let mut coinbase_tx: Transaction =
             bitcoin::Transaction::consensus_decode(&mut coinbase_cursor).unwrap();
 
@@ -555,13 +561,22 @@ impl DownstreamClient {
                 (header_version & !mask_version_bits) | (version_bits & mask_version_bits);
         }
         //Computing the block header
+        // CRASH RISK: from_str_radix() with unwrap() will panic if ntime is not valid hexadecimal.
+        // Miner can send invalid ntime format, crashing entire server.
+        log::debug!("DEBUG: About to parse ntime from hex - potential crash point: {}", ntime);
+        let parsed_ntime = u32::from_str_radix(ntime, 16).unwrap();
+
+        // CRASH RISK: from_str_radix() with unwrap() will panic if nonce is not valid hexadecimal.
+        // Miner can send invalid nonce format, crashing entire server.
+        log::debug!("DEBUG: About to parse nonce from hex - potential crash point: {}", nonce);
+        let parsed_nonce = u32::from_str_radix(nonce, 16).unwrap();
         let header = BlockHeader {
             version: bitcoin::blockdata::block::Version::from_consensus(final_masked_version),
             prev_blockhash: submitted_job.blocktemplate.previousblockhash,
             merkle_root: merkle_root,
-            time: BlockTime::from_u32(u32::from_str_radix(ntime, 16).unwrap()),
+            time: BlockTime::from_u32(parsed_ntime),
             bits: submitted_job.blocktemplate.bits,
-            nonce: u32::from_str_radix(nonce, 16).unwrap(),
+            nonce: parsed_nonce,
         };
         let compact_target = submitted_job.blocktemplate.bits;
         let target = bitcoin::Target::from_compact(compact_target);
@@ -651,8 +666,16 @@ impl DownstreamClient {
             }
         }
         //Passing both the extranonces for committment in uncommitted metadata
+
+        // CRASH RISK: from_str_radix() with unwrap() will panic if extranonce2 is not valid hexadecimal.
+        // Miner can send invalid extranonce2 format, crashing entire server.
+        log::debug!("DEBUG: About to parse extranonce2 from hex - potential crash point: {}", extranonce2);
         let extranonce_2_raw_value = u32::from_str_radix(extranonce2, 16).unwrap();
         let extranonce_1_hex_str = hex::encode(self.extranonce1.clone());
+
+        // CRASH RISK: from_str_radix() with unwrap() will panic if extranonce1 hex encoding is invalid.
+        // This should never happen with server-generated extranonce1, but kept for consistency.
+        log::debug!("DEBUG: About to parse extranonce1 from hex - potential crash point: {}", extranonce_1_hex_str);
         let extranonce_1_raw_value = u32::from_str_radix(&extranonce_1_hex_str, 16).unwrap();
         let _swarm_command_sent = match swarm_handler
             .lock()
@@ -1301,8 +1324,10 @@ impl Notifier {
         latest_template_id: Arc<Mutex<String>>,
     ) -> Result<(), StratumErrors> {
         log::info!("Notifier task has  started");
+        log::debug!("DEBUG: run_notifier entered, waiting for notification commands");
         while let Some(notification_command) = self.notification_receiver.recv().await {
-            match notification_command {
+                log::debug!("DEBUG: Notifier received notification command");
+                match notification_command {
                 //Whenever a new template is received it is broadcasted across all the downstream nodes connected .
                 NotifyCmd::SendToAll {
                     template,
@@ -1316,11 +1341,32 @@ impl Notifier {
                     //We will receive the template from the IPC channel and construct a valid job
                     //from the provided template and pass onto the message_reciver in the handle connection for
                     // downstream communication to take place.
-                    for (peer_adr, mining_job_arc) in self.job_map_arc.lock().await.iter() {
+
+                    // DEADLOCK RISK: Notifier holds global job_map_arc lock while processing all peers.
+                    // If new connection arrives simultaneously, main server blocks trying to acquire same lock
+                    // to add new peer, causing deadlock. New connections are accepted but server becomes unresponsive.
+                    log::debug!("DEBUG: About to acquire job_map_arc lock in notifier - potential deadlock point");
+                    let job_map_guard = self.job_map_arc.lock().await;
+                    log::debug!("DEBUG: Acquired job_map_arc lock, iterating over {} peers", job_map_guard.len());
+
+                    // Collect peer data while holding the lock, then release it before processing
+                    let peer_data: Vec<(String, Arc<Mutex<MiningJobMap>>)> = job_map_guard.iter()
+                        .map(|(addr, arc)| (addr.clone(), Arc::clone(arc)))
+                        .collect();
+
+                    // Release the lock immediately after collecting data
+                    drop(job_map_guard);
+                    log::debug!("DEBUG: Released job_map_arc lock, processing {} peers", peer_data.len());
+
+                    for (peer_adr, mining_job_arc) in peer_data {
                         let mut template_for_job = template.clone();
                         template_for_job.transactions.remove(0);
 
+                        // DEADLOCK RISK: Individual peer mining job map lock. While less risky than global locks,
+                    // can still deadlock if connection handler holds peer lock while notifier needs it.
+                    log::debug!("DEBUG: About to acquire nested mining_job_arc lock for peer {} - potential deadlock point", peer_adr);
                         let mut curr_peer_mining_job_map = mining_job_arc.lock().await;
+                        log::debug!("DEBUG: Acquired nested mining_job_arc lock for peer {}", peer_adr);
                         //The new job id to be provided while constructing the new job .
                         // let next_job_id = curr_peer_mining_job_map.get_next_job_id();
                         // Clean Jobs. If true, miners should abort their current work and immediately use the new job,
@@ -1383,19 +1429,28 @@ impl Notifier {
                             ]),
                         };
 
+                        // DEADLOCK RISK: Connection map lock needed to send notifications. Can deadlock with new connections
+                    // that need the same lock to register themselves in the connection map.
+                    log::debug!("DEBUG: About to acquire downstream_connection_map lock for channel lookup - potential deadlock point");
                         let downstream_channel_mapping = downstream_connection_map
                             .lock()
                             .await
                             .downstream_channel_mapping
                             .clone();
+                        log::debug!("DEBUG: Acquired downstream_connection_map lock, {} channels available", downstream_channel_mapping.len());
 
-                        if let Some(downstream_channel) = downstream_channel_mapping.get(peer_adr) {
+                        if let Some(downstream_channel) = downstream_channel_mapping.get(&peer_adr) {
+                            log::debug!("DEBUG: About to send job notification to peer {} - potential block point", peer_adr);
                             if let Err(e) = downstream_channel
                                 .send(serde_json::to_string(&job_notification_response).unwrap())
                                 .await
                             {
                                 log::error!("Failed to send to peer {}: {}", peer_adr, e);
+                            } else {
+                                log::debug!("DEBUG: Successfully sent job notification to peer {}", peer_adr);
                             }
+                        } else {
+                            log::debug!("DEBUG: No channel found for peer {} - may have disconnected", peer_adr);
                         }
                     }
                 }
@@ -1426,25 +1481,39 @@ impl Notifier {
                     let latest_template = latest_template_arc.lock().await.to_owned();
                     let latest_template_merkle_branch =
                         latest_template_merkle_branch_arc.lock().await.to_owned();
-                    let current_downstream_mapping = downstream_connection_map.lock().await;
-                    let current_downstream_message_sender_res = current_downstream_mapping
-                        .downstream_channel_mapping
-                        .get(&new_downstream_addr);
-                    let global_peer_mining_job_map_arc = self.job_map_arc.lock().await;
-                    let current_peer_mining_job_map_arc = global_peer_mining_job_map_arc
-                        .get(&new_downstream_addr)
-                        .unwrap();
+
+                    // DEADLOCK RISK: SendLatestTemplateToNewDownstream needs multiple locks in sequence:
+                    // 1. Connection map lock to get channel sender
+                    // 2. Global job map lock to get peer's job map
+                    // 3. Individual peer job map lock to update job
+                    // Any of these can deadlock with other operations holding the same locks.
+
+                    // Collect channel sender while holding connection map lock, then release it
+                    let current_downstream_message_sender_res = {
+                        let current_downstream_mapping = downstream_connection_map.lock().await;
+                        current_downstream_mapping
+                            .downstream_channel_mapping
+                            .get(&new_downstream_addr)
+                            .cloned() // Clone the Sender to extend lock scope
+                    };
+
+                    // Collect mining job map arc while holding job map lock, then release it
+                    let current_peer_mining_job_map_arc = {
+                        let global_peer_mining_job_map_arc = self.job_map_arc.lock().await;
+                        global_peer_mining_job_map_arc
+                            .get(&new_downstream_addr)
+                            .cloned()
+                            .ok_or_else(|| StratumErrors::PeerNotFoundInConnectionMapping {
+                                peer_addr: new_downstream_addr.clone(),
+                            })?
+                    };
+
+                    // Now acquire the individual peer lock after releasing global locks
                     let mut curr_peer_mining_job_map = current_peer_mining_job_map_arc.lock().await;
-                    let current_downstream_message_sender =
-                        match current_downstream_message_sender_res {
-                            Some(downstream_sender) => downstream_sender,
-                            None => {
-                                log::error!("Newly peer not found in the Connection mapping");
-                                return Err(StratumErrors::PeerNotFoundInConnectionMapping {
-                                    peer_addr: new_downstream_addr,
-                                });
-                            }
-                        };
+                    let current_downstream_message_sender = current_downstream_message_sender_res
+                        .ok_or_else(|| StratumErrors::PeerNotFoundInConnectionMapping {
+                            peer_addr: new_downstream_addr.clone(),
+                        })?;
 
                     // Clean Jobs. If true, miners should abort their current work and immediately use the new job, even if it degrades hashrate in the short term.
                     // If false, they can still use the current job, but should move to the new one as soon as possible without impacting hashrate.
@@ -1617,11 +1686,24 @@ impl Server {
                             //Communication bridge between swarm and stratum service
                             let swarm_handler_arc_ref = Arc::clone(&swarm_handler);
                             //Adding the downstream mining map to global mapper
+
+                    // DEADLOCK RISK: Main server needs job_map lock to register new miners. If notifier is broadcasting
+                    // template and holds this lock, new connections will block indefinitely here, accepting connections
+                    // but becoming unresponsive to all requests.
+                            log::debug!("DEBUG: About to acquire mining_job_map lock for new connection - potential deadlock point");
                             mining_job_map.lock().await.insert(peer_addr.to_string(), self_mining_map.clone());
+                            log::debug!("DEBUG: Successfully added peer {} to mining job map", peer_addr);
                             //downstream channel for server2client communication to take place
+                            log::debug!("DEBUG: Creating channel for new peer {}", peer_addr);
                             let (downstream_tx,mut downstream_rx) = mpsc::channel(1024);
                             //adding the new connection to the connection map
+
+                    // DEADLOCK RISK: Connection map lock needed to register new miners. Can deadlock if notifier
+                    // is sending job notifications and holds same lock. New connections will be accepted but
+                    // won't be able to register, making them non-functional.
+                            log::debug!("DEBUG: About to acquire downstream_connection_mapping lock for new connection - potential deadlock point");
                             self.downstream_connection_mapping.lock().await.new_connection(peer_addr.to_string(), downstream_tx.clone());
+                            log::debug!("DEBUG: Successfully added peer {} to connection mapping", peer_addr);
                             log::info!("Connection established from a downstream node with peer address - {:?}",peer_addr);
                             self_.lock().await.downstream_ip = peer_addr.to_string();
 
@@ -1631,7 +1713,17 @@ impl Server {
 
                             // catering each new connection as seperate process
                             tokio::spawn(async move{
-                                let _=  Self::handle_connection(self_.clone(),peer_addr,reader,writer,&mut downstream_rx,self_mining_map.clone(),downstream_tx,notification_sender,swarm_handler_arc_ref).await;
+                                log::debug!("DEBUG: Spawning connection handler for peer: {}", peer_addr);
+                                log::debug!("DEBUG: Connection handler task started - entering handle_connection");
+                                let handle_result = Self::handle_connection(self_.clone(),peer_addr,reader,writer,&mut downstream_rx,self_mining_map.clone(),downstream_tx,notification_sender,swarm_handler_arc_ref).await;
+                                match handle_result {
+                                    Ok(_) => {
+                                        log::debug!("DEBUG: Connection handler for peer {} completed successfully", peer_addr);
+                                    }
+                                    Err(error) => {
+                                        log::error!("DEBUG: Connection handler for peer {} crashed with error: {:?}", peer_addr, error);
+                                    }
+                                }
                                 log::debug!("Cleaning up disconnected miner: {}", peer_addr_string);
 
                                 // cleanup after connection closes, remove from connection mapping
@@ -1689,6 +1781,7 @@ impl Server {
         swarm_handler: Arc<Mutex<SwarmHandler>>,
     ) -> Result<(), Box<StratumErrors>> {
         const MAX_LINE_LENGTH: usize = 2_usize.pow(16);
+        log::debug!("DEBUG: handle_connection function started for {}", peer_addr);
         //It can be excessively inefficient to work directly with a AsyncRead instance. A BufReader performs large, infrequent reads on the underlying AsyncRead and maintains an in-memory buffer of the results.
         let reader = BufReader::new(stream_reader);
         //reading incoming stream frame by frame
@@ -1698,6 +1791,7 @@ impl Server {
         loop {
             tokio::select! {
                 Some(message) = downstream_receiver.recv()=>{
+                    log::debug!("DEBUG: Connection handler for {} received message from channel", peer_addr);
                     log::info!("Message recieved from the Server to be sent to the downstream node is - {:?}",message);
                     //Sending the notifications of new job to the downstream
                     let write_or_not = stream_writer.write_all(format!("{}\n",message).as_bytes()).await;
@@ -1712,8 +1806,10 @@ impl Server {
                     }
                 }
                 line = framed.next().fuse() => {
+                    log::debug!("DEBUG: Connection handler for {} waiting for data from TCP stream", peer_addr);
                     match line {
                         Some(Ok(line)) => {
+                            log::debug!("DEBUG: Connection handler for {} received line from TCP: {}", peer_addr, line);
                             if line.is_empty() {
                                 continue;
                             }
@@ -1721,8 +1817,14 @@ impl Server {
                         //Parsing the lines read from buffer to find out whether they are valid JSON request type to be server as per
                         //stratum or not .
                         match serde_json::from_str::<StandardRequest>(&line) {
-                                Ok(_request) => {
-                         let server_request_res:Result<StratumResponses, StratumErrors> = downstream_client.lock().await.handle_client_to_server_request(serde_json::from_str(&line).unwrap(),mining_job_map.clone(),downstream_message_sender.clone(),notification_sender.clone(),peer_addr.to_string(),swarm_handler.clone()).await;
+                                Ok(request) => {
+                                    log::debug!("DEBUG: First JSON parse successful for line: {}", line);
+
+                        // CRASH RISK: Double JSON parsing with unwrap(). First parse succeeds as StandardRequest,
+                        // but second parse might fail if structure doesn't match handle_client_to_server_request's expected format.
+                        // This will panic the entire connection handler task, causing silent connection drops.
+                                    log::debug!("DEBUG: About to perform second JSON parse - potential crash point");
+                                    let server_request_res:Result<StratumResponses, StratumErrors> = downstream_client.lock().await.handle_client_to_server_request(serde_json::from_str(&line).unwrap(),mining_job_map.clone(),downstream_message_sender.clone(),notification_sender.clone(),peer_addr.to_string(),swarm_handler.clone()).await;
                          match server_request_res{
                             Ok(_)=>{
 
