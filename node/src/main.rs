@@ -60,6 +60,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let braid: Arc<RwLock<braid::Braid>> = Arc::new(RwLock::new(braid::Braid::new(genesis_beads)));
     //Initializing DB and db command handler
     let (mut _db_handler, db_tx) = DBHandler::new(Arc::clone(&braid)).await.unwrap();
+    let db_connection_pool = _db_handler.db_connection_pool.clone();
     //Initializing DB
     let latest_template_id = Arc::new(Mutex::new(String::from("genesis")));
     let latest_template_id_for_notifier = latest_template_id.clone();
@@ -711,6 +712,11 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let shutdown_signal = tokio::signal::ctrl_c().await;
     match shutdown_signal {
         Ok(_) => {
+            log::info!("Closing connection to DB pool");
+            let pool = db_connection_pool.lock().await;
+            //Closing all the existing connections to pool and committing from .db-wal to .db
+            pool.close().await;
+            log::info!("All the existing connections to pool closed");
             log::info!("Shutting down the Network Swarm");
             swarm_handle.abort();
             tokio::time::sleep(Duration::from_millis(1)).await;
