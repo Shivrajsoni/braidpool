@@ -13,6 +13,16 @@ use std::{
 
 use futures::lock::Mutex;
 use tokio::sync::mpsc::{self, Receiver, Sender};
+#[allow(unused_imports)]
+use tracing::{debug, error, info, trace, warn};
+
+/// Maximum number of block templates to retain in the in-memory cache.
+///
+/// This constant limits how many recent block templates, fetched via IPC from Bitcoin node,
+/// are kept available for downstream miners. When the cache exceeds this size, the oldest
+/// templates are evicted to make room for new ones. This helps prevent unbounded memory
+/// growth and ensures efficient resource usage.
+pub const MAX_CACHED_TEMPLATES: usize = 90;
 
 use crate::{
     bead::Bead,
@@ -120,19 +130,11 @@ pub async fn ipc_template_consumer(
     >,
     latest_template_id: Arc<Mutex<String>>,
 ) -> Result<(), IPCtemplateError> {
-    /// Maximum number of block templates to retain in the in-memory cache.
-    ///
-    /// This constant limits how many recent block templates, fetched via IPC from Bitcoin node,
-    /// are kept available for downstream miners. When the cache exceeds this size, the oldest
-    /// templates are evicted to make room for new ones. This helps prevent unbounded memory
-    /// growth and ensures efficient resource usage.
-    const MAX_CACHED_TEMPLATES: usize = 90;
-
     while let Some(ipc_template) = template_rx.recv().await {
         let template_bytes = match &ipc_template.processed_block_hex {
             Some(processed_hex) if !processed_hex.is_empty() => processed_hex,
             _ => {
-                log::warn!("Skipping template: processed_block_hex is missing or empty");
+                warn!("Skipping template: processed_block_hex is missing or empty");
                 continue;
             }
         };
@@ -159,7 +161,7 @@ pub async fn ipc_template_consumer(
                     let remove_count = cache.len() - MAX_CACHED_TEMPLATES;
                     for id in ids.iter().take(remove_count) {
                         cache.remove(&id.to_string());
-                        log::debug!("Removed old template {} from cache", id);
+                        debug!(template_id = %id, "Removed old template from cache");
                     }
                 }
             }
@@ -173,11 +175,14 @@ pub async fn ipc_template_consumer(
             let (template_header, template_transactions) = candidate_block.unwrap().into_parts();
             let _coinbase_transaction = template_transactions.get(0);
 
-            log::debug!(
-                "The block header for the given template is - {:?}",
-                template_header
+            debug!(
+                template_header = ?template_header,
+                "The block header for the given template is"
             );
-            log::debug!("Transactions count is - {}", template_transactions.len());
+            debug!(
+                tx_count = template_transactions.len(),
+                "Transactions count is"
+            );
             let template: BlockTemplate = BlockTemplate {
                 version: template_header.version,
                 previousblockhash: template_header.prev_blockhash,
@@ -214,7 +219,7 @@ pub async fn ipc_template_consumer(
             for branch in merkle_branch_coinbase.iter() {
                 latest_template_merkle_branch.push(branch.clone());
             }
-            log::info!(
+            info!(
                 "Latest template has been updated with the most recently received template from IPC"
             );
 
@@ -227,14 +232,14 @@ pub async fn ipc_template_consumer(
                 .await;
             match notification_sent_or_not {
                 Ok(_) => {
-                    log::info!("Template has been sent to the notifier");
+                    info!("Template has been sent to the notifier");
                 }
                 Err(error) => {
-                    log::error!("An error occurred while sending notification - {:?}", error);
+                    error!(error = ?error, "Failed to send template notification");
                 }
             }
         } else {
-            log::warn!("IPC template too short: 0 bytes");
+            warn!("IPC template too short: 0 bytes");
         }
     }
 
@@ -280,7 +285,7 @@ impl SwarmHandler {
             .map(|tx| tx.compute_txid())
             .collect();
         let transaction_ids: Vec<Txid> = Vec::from(ids);
-        log::info!("Received command for broadcasting bead via floodsub");
+        info!("Received command for broadcasting bead via floodsub");
         //TODO:Currently temprorary placeholder will be replaced in upcoming PRs
         let public_key = "020202020202020202020202020202020202020202020202020202020202020202"
             .parse::<bitcoin::PublicKey>()
@@ -297,7 +302,7 @@ impl SwarmHandler {
                 .0
                 .push(current_tip_bead.committed_metadata.start_timestamp);
         }
-        log::info!(
+        info!(
             "Current tip indices before new insertion - {:?}",
             tips_index
         );
@@ -354,7 +359,7 @@ impl SwarmHandler {
             uncommitted_metadata: candidate_block_bead_uncommitted_metadata,
         };
         let status = braid_data.extend(&weak_share);
-        log::info!("Bead extended successfully - {:?}", status);
+        info!(status = ?status, "Bead extended successfully");
         let _db_insertion_command = match self
             .db_command_sender
             .send(BraidpoolDBTypes::InsertTupleTypes {
@@ -365,10 +370,10 @@ impl SwarmHandler {
             .await
         {
             Ok(_) => {
-                log::info!("Bead insertion query sent");
+                info!("Bead insertion query sent");
             }
             Err(error) => {
-                log::info!("{:?}", error);
+                error!(error = ?error, "Database insertion command failed");
             }
         };
         let serialized_weak_share_bytes = bitcoin::consensus::serialize(&weak_share);
@@ -381,10 +386,10 @@ impl SwarmHandler {
             .await
         {
             Ok(_) => {
-                log::info!("Candidate block sent to swarm after PoW validation");
+                info!("Candidate block sent to swarm after PoW validation");
             }
             Err(error) => {
-                log::error!(
+                error!(
                     "An error occurred while sending candidate block to swarm after PoW validation"
                 );
                 return Err(StratumErrors::CandidateBlockNotSent {
@@ -395,25 +400,38 @@ impl SwarmHandler {
         Ok(())
     }
 }
-///Initializing the logger via `tokio_trace`
-pub fn setup_logging() {
-    env_logger::init_from_env(
-        env_logger::Env::default().filter_or(env_logger::DEFAULT_FILTER_ENV, "info"),
-    );
-}
 
 pub fn setup_tracing() -> Result<(), Box<dyn Error>> {
-    // Create a filter for controlling the verbosity of tracing output
-    let filter =
-        tracing_subscriber::EnvFilter::from_default_env().add_directive("chat=info".parse()?);
+    // Create a filter that uses RUST_LOG environment variable if set,
+    // otherwise falls back to reasonable defaults
+    let filter = if std::env::var("RUST_LOG").is_ok() {
+        // If RUST_LOG is set, use it exactly as provided
+        tracing_subscriber::EnvFilter::from_default_env()
+    } else {
+        // If no RUST_LOG is set, use sensible defaults
+        tracing_subscriber::EnvFilter::from_default_env()
+            .add_directive("node=info".parse()?)
+            .add_directive("libp2p=info".parse()?)
+    };
 
-    // Build a `tracing` subscriber with the specified filter
-    let subscriber = tracing_subscriber::FmtSubscriber::builder()
+    // Enable file and line number logging when RUST_LOG includes debug or trace
+    let show_location = std::env::var("RUST_LOG")
+        .map(|v| v.contains("debug") || v.contains("trace"))
+        .unwrap_or(false);
+
+    // Build and initialize a `tracing` subscriber with the specified filter, colors, and target/module prefixes
+    // The .init() method automatically calls LogTracer::init() when the tracing-log feature is enabled,
+    // which intercepts log:: calls from dependencies (like libp2p, sqlx) and forwards them to tracing
+    tracing_subscriber::FmtSubscriber::builder()
         .with_env_filter(filter)
-        .finish();
-
-    // Set the subscriber as the global default for tracing
-    tracing::subscriber::set_global_default(subscriber).expect("setting default subscriber failed");
+        .with_target(true) // Show the target/module (e.g., "libp2p::kad", "node::main")
+        .with_thread_ids(false) // Set to true if you want thread IDs
+        .with_thread_names(false) // Set to true if you want thread names
+        .with_file(show_location) // Show file names when RUST_LOG=debug or RUST_LOG=trace
+        .with_line_number(show_location) // Show line numbers when RUST_LOG=debug or RUST_LOG=trace
+        .with_ansi(true) // Enable ANSI colors
+        .compact() // Use a more compact format that works well with colors
+        .init();
 
     Ok(())
 }

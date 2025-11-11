@@ -2,9 +2,12 @@
 use crate::config::CoinbaseConfig;
 use crate::error::CoinbaseError;
 use crate::error::{classify_error, ErrorKind};
+use crate::MAX_CACHED_TEMPLATES;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::mpsc::Sender;
+#[allow(unused_imports)]
+use tracing::{debug, error, info, trace, warn};
 pub mod client;
 use crate::template_creator::{create_block_template, FinalTemplate};
 use bitcoin::Network;
@@ -32,7 +35,7 @@ pub async fn ipc_block_listener(
         crate::stratum::BlockSubmissionRequest,
     >,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    log::info!(
+    info!(
         "Starting IPC block listener on: {} for network: {}",
         ipc_socket_path,
         network
@@ -45,12 +48,12 @@ pub async fn ipc_block_listener(
             let mut backoff_seconds = 1;
             let mut shared_client = match SharedBitcoinClient::new(&ipc_socket_path).await {
                 Ok(client) => {
-                    log::info!("IPC connection established");
+                    info!("IPC connection established");
                     client
                 }
                 Err(e) => {
-                    log::error!("Failed to connect to IPC socket: {}", e);
-                    log::info!("Retrying connection in 10 seconds...");
+                    error!("Failed to connect to IPC socket: {}", e);
+                    info!("Retrying connection in 10 seconds...");
                     tokio::time::sleep(tokio::time::Duration::from_secs(10)).await;
                     continue;
                 }
@@ -60,30 +63,30 @@ pub async fn ipc_block_listener(
                 match shared_client.is_initial_block_download(Some(RequestPriority::High)).await {
                    Ok(in_ibd) => {
                         if in_ibd {
-                            log::warn!("Node is in IBD (not synced) - proceeding anyway for now");
+                            info!("Node is in IBD (not synced), proceeding with limited functionality");
                             let result = Ok(false); // Not synced, but continue
                             break result;
                         } else {
-                            log::info!("Node is synced and ready to be used");
+                            info!("Node is synced and ready to be used");
                             break Ok(true);
                         }
                     }
                     Err(e) => {
-                        log::error!("Initial sync check failed: {}", e);
+                        error!("Initial sync check failed: {}", e);
 
                         match classify_error(&e) {
                             ErrorKind::Temporary => {
-                                log::warn!("Temporary error during sync check, retrying in {} seconds...", backoff_seconds);
+                                warn!("Temporary error during sync check, retrying in {} seconds...", backoff_seconds);
                                 tokio::time::sleep(tokio::time::Duration::from_secs(backoff_seconds)).await;
                                 backoff_seconds = std::cmp::min(backoff_seconds * 2, MAX_BACKOFF);
                                 continue;
                             }
                             ErrorKind::ConnectionBroken => {
-                                log::error!("Connection broken during initial sync check - reconnecting...");
+                                error!("Connection broken during initial sync check - reconnecting...");
                                 break Err(ErrorKind::ConnectionBroken);
                             }
                             ErrorKind::LogicError => {
-                                log::warn!("Unexpected error occurred during sync check, continuing without sync check");
+                                warn!("Unexpected error occurred during sync check, continuing without sync check");
                                 break Ok(false);
                             }
                         }
@@ -93,7 +96,7 @@ pub async fn ipc_block_listener(
             let tip_height = match shared_client.get_mining_tip_info(Some(RequestPriority::High)).await {
                     Ok((height, _hash)) => height,
                     Err(e) => {
-                        log::error!("Failed to get mining tip info: {}", e);
+                        error!("Failed to get mining tip info: {}", e);
                         continue;
                     }
             };
@@ -121,21 +124,25 @@ pub async fn ipc_block_listener(
                     network,
                 ).await {
                     Ok(template) => {
-                        log::info!("Got initial block template: {} bytes - Height: {}", template.components.block_hex.len(), tip_height);
+                        info!(
+                            size_bytes = template.components.block_hex.len(),
+                            height = tip_height,
+                            "Got initial block template"
+                        );
                         if let Err(e) = block_template_tx.send(Arc::new(template)).await {
-                            log::error!("Failed to send initial template: {}", e);
+                            error!("Failed to send initial template: {}", e);
                             continue;
                         }
                     }
                     Err(e) => {
-                        log::error!("Failed to get initial template: {}", e);
+                        error!("Failed to get initial template: {}", e);
                         match classify_error(&e) {
                             ErrorKind::ConnectionBroken => {
-                                log::error!("Connection lost getting initial template - reconnecting...");
+                                error!("Connection lost getting initial template - reconnecting...");
                                 continue; // Restart connection loop
                             }
                             ErrorKind::Temporary | ErrorKind::LogicError => {
-                                log::warn!("Non-connection error occurred getting initial template, continuing anyway");
+                                warn!("Non-connection error occurred getting initial template, continuing anyway");
                                 // Continue anyway - we'll get templates on block changes
                             }
                         }
@@ -146,13 +153,13 @@ pub async fn ipc_block_listener(
             let mut notification_receiver = match shared_client.take_notification_receiver() {
                 Some(receiver) => receiver,
                 None => {
-                    log::error!("Failed to get notification receiver - reconnecting");
+                    error!("Failed to get notification receiver - reconnecting");
                     tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
                     continue;
                 }
             };
 
-            log::info!("listening for block notifications...");
+            info!("listening for block notifications...");
 
             // Listen for block connect notifications only
             let should_reconnect = loop {
@@ -162,7 +169,11 @@ pub async fn ipc_block_listener(
                             Some(BitcoinNotification::TipChanged { height, hash, .. }) => {
                                 let mut hash_reversed = hash.clone();
                                 hash_reversed.reverse();
-                                log::info!("New block #{} - Hash: {}", height, bytes_to_hex(&hash_reversed));
+                                info!(
+                                    height = height,
+                                    hash = %bytes_to_hex(&hash_reversed),
+                                    "New block received"
+                                );
                                 match shared_client.is_initial_block_download(Some(RequestPriority::High)).await {
                                     Ok(in_ibd) => {
                                         if !in_ibd { // Node is synced (not in IBD)
@@ -176,47 +187,47 @@ pub async fn ipc_block_listener(
                                                 network,
                                             ).await {
                                                 Ok(template) => {
-                                                    log::info!(
-                                                        "Got block template data: {} bytes",
-                                                        template.processed_block_hex.as_ref().map(|v| v.len()).unwrap_or(0)
+                                                    info!(
+                                                        size_bytes = template.processed_block_hex.as_ref().map(|v| v.len()).unwrap_or(0),
+                                                        "Got block template data"
                                                     );
                                                     if let Err(e) = block_template_tx.send(Arc::new(template)).await {
-                                                        log::error!("Failed to send template: {}", e);
+                                                        error!("Failed to send template: {}", e);
                                                         break true;
                                                     }
                                                 }
                                                 Err(e) => {
-                                                    log::error!("Failed to get block template: {}", e);
+                                                    error!("Failed to get block template: {}", e);
                                                     match classify_error(&e) {
                                                         ErrorKind::ConnectionBroken => {
-                                                            log::error!("Connection lost, restarting connection loop");
+                                                            error!("Connection lost, restarting connection loop");
                                                             break true;
                                                         }
                                                         ErrorKind::Temporary => {
-                                                            log::warn!("Non critical error occurred getting template for block {}, will retry on next block", height);
+                                                            warn!("Non critical error occurred getting template for block {}, will retry on next block", height);
                                                         }
                                                         ErrorKind::LogicError => {
-                                                            log::warn!("Unexpected error occurred getting template for block {}, continuing", height);
+                                                            warn!("Unexpected error occurred getting template for block {}, continuing", height);
                                                         }
                                                     }
                                                 }
                                             }
                                         } else {
-                                            log::warn!("Node was in IBD at block {}, skipping template request", height);
+                                            warn!("Node was in IBD at block {}, skipping template request", height);
                                         }
                                     }
                                     Err(e) => {
-                                        log::error!("Sync check failed for block {}: {}", height, e);
+                                        error!("Sync check failed for block {}: {}", height, e);
                                         match classify_error(&e) {
                                             ErrorKind::ConnectionBroken => {
-                                                log::error!("Connection lost during sync check, reconnecting...");
+                                                error!("Connection lost during sync check, reconnecting...");
                                                 break true;
                                             }
                                             ErrorKind::Temporary => {
-                                                log::warn!("Non critical error occurred during sync check for block {}, will retry on next block", height);
+                                                warn!("Non critical error occurred during sync check for block {}, will retry on next block", height);
                                             }
                                             ErrorKind::LogicError => {
-                                                log::warn!("Unexpected error occurred during sync check for block {}, continuing", height);
+                                                warn!("Unexpected error occurred during sync check for block {}, continuing", height);
                                             }
                                         }
                                     }
@@ -224,12 +235,12 @@ pub async fn ipc_block_listener(
                             }
 
                             Some(BitcoinNotification::ConnectionLost { reason }) => {
-                                log::error!("Connection lost: {}", reason);
+                                error!("Connection lost: {}", reason);
                                 break true;
                             }
 
                             None => {
-                                log::error!("Failed to receive notifications. Maybe the connection was lost");
+                                error!("Failed to receive notifications. Maybe the connection was lost");
                                 break true;
                             }
                         }
@@ -253,27 +264,37 @@ pub async fn ipc_block_listener(
                             {
                                 Ok(result) => {
                                     if result.success {
-                                        log::info!("Block {} ACCEPTED by Bitcoin Core!", submission.template_id);
+                                        info!(
+                                            template_id = %submission.template_id,
+                                            "Block ACCEPTED by Bitcoin Core"
+                                        );
                                     } else {
-                                        log::error!("Block {} REJECTED: {}", submission.template_id, result.reason);
+                                        error!(
+                                            template_id = %submission.template_id,
+                                            reason = %result.reason,
+                                            "Block REJECTED by Bitcoin Core"
+                                        );
                                     }
                                 }
                                 Err(e) => {
-                                    log::error!("Error submitting block {}: {}", submission.template_id, e);
+                                    error!(
+                                        template_id = %submission.template_id,
+                                        error = %e,
+                                        "Failed to submit block"
+                                    );
                                 }
                             }
                         } else {
-                            log::error!(
-                                "BLOCK SUBMISSION DROPPED\n\
-                                Template ID: {} NOT FOUND IN CACHE\n\
-                                This represents a potentially valid Bitcoin block that cannot be submitted!\n\
-                                Possible causes:\n\
-                                - Template expired (current size: {}, Max size: {} templates)\n\
-                                - Cache overflow (old template was evicted)",
-                                submission.template_id,
-                                template_cache.lock().await.len(),
-                                90,
-                           );
+                            // This represents a potentially valid Bitcoin block that cannot be submitted!
+                            // Possible causes:
+                            // - Template expired (cache is full and old template was evicted)
+                            // - Cache overflow (exceeded MAX_CACHED_TEMPLATES limit)
+                            error!(
+                                template_id = %submission.template_id,
+                                cache_size = template_cache.lock().await.len(),
+                                max_cache_size = MAX_CACHED_TEMPLATES,
+                                "Block submission dropped - template not found in cache"
+                            );
                         }
                     }
                 }
@@ -282,22 +303,26 @@ pub async fn ipc_block_listener(
                         let stats = shared_client.get_queue_stats();
 
                         if !shared_client.is_healthy() {
-                            log::warn!("IPC queue unhealthy - Pending: {}, Avg time: {}ms, Critical queue: {}",
-                              stats.pending_requests,
-                                stats.avg_processing_time_ms,
-                                stats.queue_sizes.critical);
+                            warn!(
+                                pending = stats.pending_requests,
+                                avg_time_ms = stats.avg_processing_time_ms,
+                                critical_queue = stats.queue_sizes.critical,
+                                "IPC queue unhealthy"
+                            );
                         }
                     }
 
                     _ = detailed_stats_interval.tick() => {
                         let stats = shared_client.get_queue_stats();
-                        log::info!("IPC Stats - Failed: {}, Avg: {}ms, Queues: C:{} H:{} N:{} L:{}",
-                            stats.failed_requests,
-                            stats.avg_processing_time_ms,
-                            stats.queue_sizes.critical,
-                            stats.queue_sizes.high,
-                            stats.queue_sizes.normal,
-                            stats.queue_sizes.low);
+                        debug!(
+                            failed = stats.failed_requests,
+                            avg_ms = stats.avg_processing_time_ms,
+                            critical = stats.queue_sizes.critical,
+                            high = stats.queue_sizes.high,
+                            normal = stats.queue_sizes.normal,
+                            low = stats.queue_sizes.low,
+                            "IPC queue statistics"
+                        );
                     }
 
                     // Health check
@@ -306,17 +331,17 @@ pub async fn ipc_block_listener(
                             Ok(_) => {
                             }
                             Err(e) => {
-                                log::error!("Connection health check failed: {}", e);
+                                error!(error = %e, "Connection health check failed");
                                 match classify_error(&e) {
                                     ErrorKind::ConnectionBroken => {
-                                        log::error!("Dead connection detected, reconnecting...");
+                                        error!("Dead connection detected, reconnecting...");
                                         break true;
                                     }
                                     ErrorKind::Temporary => {
-                                        log::warn!("Non critical error occurred in health check, will retry on next interval");
+                                        warn!("Non critical error occurred in health check, will retry on next interval");
                                     }
                                     ErrorKind::LogicError => {
-                                        log::warn!("Unexpected error occurred in health check, continuing operation");
+                                        warn!("Unexpected error occurred in health check, continuing operation");
                                         // Continue normal operation
                                     }
                                 }
@@ -327,7 +352,7 @@ pub async fn ipc_block_listener(
             };
 
             if should_reconnect {
-                log::warn!("Connection lost, attempting to reconnect in 5 seconds...");
+                warn!("Connection lost, attempting to reconnect in 5 seconds...");
                 shared_client.shutdown().await.ok();
                 tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
             }
@@ -389,7 +414,7 @@ async fn get_template_with_retry(
                         if let Some(ref hex) = processed_template.processed_block_hex {
                             if hex.len() >= MIN_TEMPLATE_SIZE {
                                 if attempt > 1 {
-                                    log::info!(
+                                    info!(
                                         "{}: Got valid template {} bytes (attempt {})",
                                         context,
                                         hex.len(),
@@ -398,7 +423,7 @@ async fn get_template_with_retry(
                                 }
                                 return Ok(processed_template);
                             } else if attempt == max_attempts {
-                                log::warn!(
+                                warn!(
                                     "{}: Template too small ({} bytes) after {} attempts, using anyway",
                                     context,
                                     hex.len(),
@@ -406,7 +431,7 @@ async fn get_template_with_retry(
                                 );
                                 return Ok(processed_template);
                             } else {
-                                log::warn!(
+                                warn!(
                                     "{}: Template too small ({} bytes), retrying... (attempt {}/{})",
                                     context,
                                     hex.len(),
@@ -425,7 +450,7 @@ async fn get_template_with_retry(
 
                         if attempt == max_attempts {
                             if let Some(template) = last_template {
-                                log::warn!(
+                                warn!(
                                     "{}: Final attempt failed, using last template",
                                     context
                                 );
@@ -434,7 +459,7 @@ async fn get_template_with_retry(
                             return Err(Box::new(e));
                         }
 
-                        log::warn!(
+                        warn!(
                             "{}: Attempt {} failed: {}, retrying...",
                             context,
                             attempt,
@@ -451,13 +476,13 @@ async fn get_template_with_retry(
 
                 if attempt == max_attempts {
                     if let Some(template) = last_template {
-                        log::warn!("{}: Final attempt failed, using last template", context);
+                        warn!("{}: Final attempt failed, using last template", context);
                         return Ok(template);
                     }
                     return Err(e);
                 }
 
-                log::warn!(
+                warn!(
                     "{}: Attempt {} failed: {}, retrying...",
                     context,
                     attempt,

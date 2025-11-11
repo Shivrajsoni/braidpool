@@ -1,4 +1,6 @@
 use crate::bead::Bead;
+#[allow(unused_imports)]
+use tracing::{debug, error, info, trace, warn};
 #[cfg(test)]
 use crate::braid;
 use crate::braid::AddBeadStatus;
@@ -19,7 +21,6 @@ use jsonrpsee::proc_macros::rpc;
 use jsonrpsee::types::ErrorObjectOwned;
 use jsonrpsee::types::Request;
 use jsonrpsee::ConnectionId;
-use log;
 use serde_json;
 use std::future::Future;
 use std::net::SocketAddr;
@@ -108,14 +109,14 @@ pub async fn handle_request(
         client.request(&method, method_params.clone()).await;
     match rpc_response {
         Ok(response) => {
-            log::info!(
+            info!(
                 "Response received successfully from the RPC server - {:?}",
                 response
             );
             Ok(())
         }
         Err(error) => {
-            log::error!(
+            error!(
                 "An error occurred while receiving response from Server - {:?}",
                 error
             );
@@ -167,7 +168,7 @@ impl RpcServer for RpcServerImpl {
         let hash = bead_hash
             .parse::<BeadHash>()
             .map_err(|_| ErrorObjectOwned::owned(1, "Invalid bead hash format", None::<()>))?;
-        log::info!("Get bead request recieved from client");
+        info!("Get bead request recieved from client");
         let braid_data = self.braid_arc.read().await;
         let bead = braid_data
             .beads
@@ -190,7 +191,7 @@ impl RpcServer for RpcServerImpl {
         let bead: Bead = serde_json::from_str(&bead_data).map_err(|e| {
             ErrorObjectOwned::owned(1, format!("Invalid bead data: {}", e), None::<()>)
         })?;
-        log::info!("Add bead request recieved from client");
+        info!("Add bead request recieved from client");
         let mut braid_data = self.braid_arc.write().await;
         let success_status = braid_data.extend(&bead);
 
@@ -213,7 +214,7 @@ impl RpcServer for RpcServerImpl {
             .iter()
             .map(|&index| braid_data.beads[index].block_header.block_hash())
             .collect();
-        log::info!("Get tips request received from client");
+        info!("Get tips request received from client");
         let tips_str: Vec<String> = tips.iter().map(|h| h.to_string()).collect();
 
         serde_json::to_string(&tips_str)
@@ -223,13 +224,13 @@ impl RpcServer for RpcServerImpl {
     async fn get_bead_count(&self) -> Result<String, ErrorObjectOwned> {
         let braid_data = self.braid_arc.read().await;
         let count = braid_data.beads.len();
-        log::info!("Get bead count request received  from client");
+        info!("Get bead count request received  from client");
         Ok(count.to_string())
     }
 
     async fn get_cohort_count(&self) -> Result<String, ErrorObjectOwned> {
         let braid_data = self.braid_arc.read().await;
-        log::info!("Get cohort request received from client ");
+        info!("Get cohort request received from client ");
         let count = braid_data.cohorts.len();
 
         Ok(count.to_string())
@@ -249,14 +250,14 @@ where
         &self,
         request: Request<'a>,
     ) -> impl Future<Output = Self::MethodResponse> + Send + 'a {
-        tracing::info!("Received request: {:?}", request);
+        info!("Received request: {:?}", request);
         assert!(request.extensions().get::<ConnectionId>().is_some());
 
         self.0.call(request)
     }
 
     fn batch<'a>(&self, batch: Batch<'a>) -> impl Future<Output = Self::BatchResponse> + Send + 'a {
-        tracing::info!("Received batch: {:?}", batch);
+        info!("Received batch: {:?}", batch);
         self.0.batch(batch)
     }
 
@@ -264,7 +265,7 @@ where
         &self,
         n: Notification<'a>,
     ) -> impl Future<Output = Self::NotificationResponse> + Send + 'a {
-        tracing::info!("Received notif: {:?}", n);
+        info!("Received notif: {:?}", n);
         self.0.notification(n)
     }
 }
@@ -285,7 +286,7 @@ pub async fn run_rpc_server(braid_shared_pointer: Arc<RwLock<Braid>>) -> Result<
     //context for the served server
     let rpc_impl = RpcServerImpl::new(braid_shared_pointer);
     let handle = server.start(rpc_impl.into_rpc());
-    log::info!(
+    info!(
         "RPC Server is listening at socket address http://{:?}",
         addr
     );

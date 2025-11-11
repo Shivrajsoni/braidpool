@@ -2,6 +2,8 @@ use sqlx::{sqlite::SqliteConnectOptions, Executor, SqlitePool};
 use std::{env, fs, path::Path, str::FromStr};
 
 use crate::error::DBErrors;
+#[allow(unused_imports)]
+use tracing::{debug, error, info, trace, warn};
 static SCHEMA_SQL: &str = include_str!("schema.sql");
 
 pub async fn init_db() -> Result<SqlitePool, DBErrors> {
@@ -21,7 +23,7 @@ pub async fn init_db() -> Result<SqlitePool, DBErrors> {
     //Creating db directory
     match fs::create_dir_all(&db_dir) {
         Ok(_) => {
-            log::info!("DB directory created successfully");
+            info!("DB directory created successfully");
         }
         Err(error) => {
             return Err(DBErrors::DBDirectoryNotCreated {
@@ -48,7 +50,7 @@ pub async fn init_db() -> Result<SqlitePool, DBErrors> {
         .journal_mode(sqlx::sqlite::SqliteJournalMode::Wal);
     //Initializing connection to existing DB
     let conn = if db_exists {
-        log::info!("Database already exists at {:?}", db_path);
+        info!("Database already exists at {:?}", db_path);
         let pool = match SqlitePool::connect_with(sql_lite_connections).await {
             Ok(initialized_pool) => initialized_pool,
             Err(error) => {
@@ -70,7 +72,7 @@ pub async fn init_db() -> Result<SqlitePool, DBErrors> {
         };
         let _query_result = match pool.execute(SCHEMA_SQL).await {
             Ok(_res) => {
-                log::info!("Schema initialized successfully at {:?}", db_path);
+                info!("Schema initialized successfully at {:?}", db_path);
             }
             Err(error) => {
                 return Err(DBErrors::SchemaNotInitialized {
@@ -86,10 +88,10 @@ pub async fn init_db() -> Result<SqlitePool, DBErrors> {
             .await
         {
             Ok(_) => {
-                log::info!("WAL checkpoint completed successfully");
+                info!("WAL checkpoint completed successfully");
             }
             Err(error) => {
-                log::warn!("WAL checkpoint failed: {}", error);
+                warn!(error = ?error, "WAL checkpoint failed");
             }
         }
         pool

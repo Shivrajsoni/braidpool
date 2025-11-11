@@ -24,8 +24,6 @@ bitcoin_hashes = { workspace = true }
 bitcoincore-rpc = { workspace = true }
 bitcoincore-rpc-json = { workspace = true }
 bitcoincore-zmq = { workspace = true }
-env_logger = { workspace = true }
-log = { workspace = true }
 shellexpand = { workspace = true }
 num = { workspace = true }
 rand = { workspace = true }
@@ -35,6 +33,7 @@ toml = { workspace = true }
 jsonrpsee = { workspace = true }
 async-trait = { workspace = true }
 sqlx = { workspace = true}
+strum = { workspace = true }
 anyhow = "1.0.100"
 
 

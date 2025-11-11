@@ -15,6 +15,8 @@ use tokio::sync::{mpsc, oneshot};
 use tokio::task::{self, JoinHandle};
 use tokio_util::compat::{TokioAsyncReadCompatExt, TokioAsyncWriteCompatExt};
 
+#[allow(unused_imports)]
+use tracing::{debug, error, info, trace, warn};
 pub fn bytes_to_hex(bytes: &[u8]) -> String {
     bytes
         .iter()
@@ -68,7 +70,7 @@ pub enum BitcoinNotification {
 }
 
 // Request types with priority
-#[derive(Debug)]
+#[derive(Debug, strum::IntoStaticStr)]
 enum BitcoinRequest {
     RemoveTransaction {
         txid: Vec<u8>,
@@ -508,7 +510,7 @@ impl BitcoinRpcClient {
                     coinbase_merkle_path.push(hash_bytes);
                 }
                 Err(e) => {
-                    log::error!("Failed to get merkle[{}]: {}", i, e);
+                    error!(index = i, error = %e, "Failed to get merkle path entry");
                     break;
                 }
             }
@@ -592,19 +594,23 @@ impl BitcoinRpcClient {
                             hash: hash.clone(),
                         };
                         if let Err(e) = notification_sender.send(notification) {
-                            log::error!("Failed to send tip change notification: {}", e);
+                            error!(error = %e, "Failed to send tip change notification");
                             if notification_sender.is_closed() {
-                                log::error!("Notification channel closed, stopping tip monitoring");
+                                error!(
+                                    "Notification channel closed, stopping tip monitoring"
+                                );
                                 return Err("Notification channel closed".into());
                             }
                         }
                         current_tip = hash;
                     } else {
-                        log::debug!("waitTipChanged returned same tip, maybe a timeout)");
+                        trace!(
+                            "waitTipChanged returned same tip (timeout or no new blocks)"
+                        );
                     }
                 }
                 Err(e) => {
-                    log::error!("waitTipChanged failed: {}", e);
+                    error!("waitTipChanged failed: {}", e);
                     let _ = notification_sender.send(BitcoinNotification::ConnectionLost {
                         reason: format!("waitTipChanged error: {}", e),
                     });
@@ -743,7 +749,7 @@ impl SharedBitcoinClient {
                 let watcher_stream = match UnixStream::connect(&socket_path).await {
                     Ok(stream) => stream,
                     Err(e) => {
-                        log::error!("Failed to connect tip watcher: {}", e);
+                        error!(socket_path = %socket_path, error = %e, "Failed to connect tip watcher");
                         return;
                     }
                 };
@@ -751,14 +757,14 @@ impl SharedBitcoinClient {
                 let bitcoin_client = match BitcoinRpcClient::new(watcher_stream).await {
                     Ok(client) => client,
                     Err(e) => {
-                        log::error!("Failed to create tip watcher client: {}", e);
+                        error!(socket_path = %socket_path, error = %e, "Failed to create tip watcher client");
                         return;
                     }
                 };
 
                 let _result = tokio::select! {
                     _ = tip_shutdown_receiver.recv() => {
-                        log::info!("Tip watcher received shutdown signal");
+                        info!("Tip watcher received shutdown signal");
                         Ok(())
                     }
                     result = bitcoin_client.wait_for_tip_change(
@@ -767,7 +773,7 @@ impl SharedBitcoinClient {
                         notification_sender_clone.clone(),
                     ) => {
                         if let Err(e) = &result {
-                            log::error!("Tip watcher failed: {}", e);
+                            error!(error = %e, "Tip watcher failed");
                             let _ = notification_sender_clone.send(BitcoinNotification::ConnectionLost {
                                 reason: format!("Tip watcher error: {}", e),
                             });
@@ -778,7 +784,7 @@ impl SharedBitcoinClient {
 
                 // Always cleanup bitcoin client
                 if let Err(e) = bitcoin_client.disconnect().await {
-                    log::error!("Error disconnecting tip watcher bitcoin client: {}", e);
+                    error!(error = %e, "Failed to disconnect tip watcher client");
                 }
             }
         });
@@ -792,7 +798,7 @@ impl SharedBitcoinClient {
                 let processor_stream = match UnixStream::connect(&socket_path).await {
                     Ok(stream) => stream,
                     Err(e) => {
-                        log::error!("Failed to connect processor: {}", e);
+                        error!(socket_path = %socket_path, error = %e, "Failed to connect processor");
                         return;
                     }
                 };
@@ -800,7 +806,7 @@ impl SharedBitcoinClient {
                 let bitcoin_client = match BitcoinRpcClient::new(processor_stream).await {
                     Ok(client) => client,
                     Err(e) => {
-                        log::error!("Failed to create processor client: {}", e);
+                        error!(socket_path = %socket_path, error = %e, "Failed to create processor client");
                         return;
                     }
                 };
@@ -813,18 +819,27 @@ impl SharedBitcoinClient {
                 loop {
                     tokio::select! {
                         _ = shutdown_receiver.recv() => {
-                            log::info!("Processor received shutdown signal");
+                            info!("Processor received shutdown signal");
                             break;
                         }
 
                         queued_request = request_receiver.recv() => {
                             if let Some(QueuedRequest { request, enqueue_time}) = queued_request {
                                 let queue_wait_time = enqueue_time.elapsed();
+                                let request_type = <&BitcoinRequest as Into<&'static str>>::into(&request);
                                 if queue_wait_time > Duration::from_millis(100) {
-                                    log::warn!("Request spent {:?} in queue before processing", queue_wait_time);
+                                    warn!(
+                                        request_type = request_type,
+                                        queue_wait_time = ?queue_wait_time,
+                                        "Request spent time in queue"
+                                    );
                                 }
                                 if let Err(e) = priority_queue.enqueue(request) {
-                                    log::error!("Failed to enqueue request: {}", e);
+                                    error!(
+                                        request_type = request_type,
+                                        error = %e,
+                                        "Failed to enqueue request"
+                                    );
                                 }
                                 // Process all queued requests
                                 while let Some(next_request) = priority_queue.dequeue() {
@@ -843,12 +858,16 @@ impl SharedBitcoinClient {
                                     };
                                     metrics.avg_processing_time_ms.store(new_avg, Ordering::Relaxed);
                                     if total_time > Duration::from_millis(1000) {
-                                        log::warn!("Slow request: queue_time={:?}, processing_time={:?}, total_time={:?}",
-                                        actual_queue_time, processing_time, total_time);
+                                        warn!(
+                                            queue_time_ms = actual_queue_time.as_millis(),
+                                            processing_time_ms = processing_time.as_millis(),
+                                            total_time_ms = total_time.as_millis(),
+                                            "Slow request detected"
+                                        );
                                     }
                                 }
                             } else {
-                                log::info!("Request receiver closed, processor shutting down");
+                                info!("Request receiver closed, processor shutting down");
                                 break;
                             }
                         }
@@ -858,7 +877,7 @@ impl SharedBitcoinClient {
                                 Some(notif) => {
                                     if let Some(ref sender) = external_notification_sender {
                                         if let Err(e) = sender.send(notif) {
-                                            log::error!("Failed to forward notification to external receiver: {}", e);
+                                            error!("Failed to forward notification to external receiver: {}", e);
                                             break;
                                         }
                                     }
@@ -882,7 +901,7 @@ impl SharedBitcoinClient {
 
                 // Always cleanup bitcoin client
                 if let Err(e) = bitcoin_client.disconnect().await {
-                    log::error!("Error disconnecting processor bitcoin client: {}", e);
+                    error!(error = %e, "Failed to disconnect processor client");
                 }
             }
         });
@@ -1009,14 +1028,14 @@ impl SharedBitcoinClient {
                 {
                     Ok(result) => {
                         if result.success {
-                            log::info!("Block submitted successfully!");
+                            info!("Block submitted successfully!");
                         } else {
-                            log::error!("Block submission failed: {}", result.reason);
+                            error!("Block submission failed: {}", result.reason);
                         }
                         let _ = response.send(Ok(result));
                     }
                     Err(e) => {
-                        log::error!("Submit solution IPC error: {}", e);
+                        error!("Submit solution IPC error: {}", e);
                         let _ = response.send(Err(e.to_string()));
                     }
                 }
@@ -1025,7 +1044,10 @@ impl SharedBitcoinClient {
 
         let processing_time = processing_start.elapsed();
         if processing_time > Duration::from_millis(500) {
-            log::warn!("Slow request processing: {:?}", processing_time);
+            warn!(
+                processing_time_ms = processing_time.as_millis(),
+                "Slow request processing detected"
+            );
         }
     }
 
@@ -1196,16 +1218,12 @@ impl SharedBitcoinClient {
         let pending = total.saturating_sub(processed);
 
         if pending > 50 || queue.is_overloaded() {
-            log::debug!(
-                "Queue: {} pending, {} failed, avg: {}ms{}",
-                pending,
-                failed,
-                metrics.avg_processing_time_ms.load(Ordering::Relaxed),
-                if queue.is_overloaded() {
-                    " [OVERLOADED]"
-                } else {
-                    ""
-                }
+            debug!(
+                pending = pending,
+                failed = failed,
+                avg_ms = metrics.avg_processing_time_ms.load(Ordering::Relaxed),
+                overloaded = queue.is_overloaded(),
+                "Queue metrics"
             );
         }
     }
@@ -1229,16 +1247,16 @@ impl SharedBitcoinClient {
         // Wait for tasks to complete gracefully
         if let Some(task) = self.processor_task.take() {
             if let Err(e) = task.await {
-                log::error!("Processor task join error: {}", e);
+                error!(error = %e, "Processor task join error");
             }
         }
 
         if let Some(tip_task) = self.tip_watcher_task.take() {
             if let Err(e) = tip_task.await {
-                log::error!("Tip watcher task join error: {}", e);
+                error!(error = %e, "Tip watcher task join error");
             }
         }
-        log::info!("SharedBitcoinClient shutdown complete");
+        info!("SharedBitcoinClient shutdown complete");
         Ok(())
     }
 

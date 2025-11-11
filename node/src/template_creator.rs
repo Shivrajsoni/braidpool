@@ -18,6 +18,8 @@ use bitcoin::{
 use std::convert::TryFrom;
 use std::io::Cursor;
 use std::str::FromStr;
+#[allow(unused_imports)]
+use tracing::{debug, error, info, trace, warn};
 
 pub mod constants {
     pub const SEGWIT_COMMITMENT_SIZE: usize = 38;
@@ -199,7 +201,7 @@ fn find_transaction_end(tx_data: &[u8]) -> Result<usize, CoinbaseError> {
     match Transaction::consensus_decode(&mut cursor) {
         Ok(tx) => {
             let end_pos = cursor.position() as usize;
-            log::debug!(
+            debug!(
                 "Transaction parsing: {} inputs, {} outputs, {} bytes",
                 tx.input.len(),
                 tx.output.len(),
@@ -208,7 +210,7 @@ fn find_transaction_end(tx_data: &[u8]) -> Result<usize, CoinbaseError> {
             Ok(end_pos)
         }
         Err(e) => {
-            log::error!(
+            error!(
                 "Failed to parse transaction: {} (data length: {})",
                 e,
                 tx_data.len()
@@ -319,7 +321,7 @@ fn build_braidpool_op_return(commitment: &[u8], extranonce: &[u8]) -> Result<TxO
 fn create_segwit_commitment_output(commitment_bytes: &[u8]) -> Result<TxOut, CoinbaseError> {
     // Validate commitment size (should be 38 bytes: OP_RETURN + 0x24 + 0xaa21a9ed + 32-byte hash)
     if commitment_bytes.len() < constants::SEGWIT_COMMITMENT_SIZE {
-        log::warn!(
+        warn!(
             "SegWit commitment too short: {} bytes",
             commitment_bytes.len()
         );
@@ -328,7 +330,7 @@ fn create_segwit_commitment_output(commitment_bytes: &[u8]) -> Result<TxOut, Coi
 
     // Verify it starts with the SegWit commitment pattern
     if commitment_bytes.len() >= 6 && commitment_bytes[2..6] != [0xaa, 0x21, 0xa9, 0xed] {
-        log::warn!("Invalid SegWit commitment pattern");
+        warn!("Invalid SegWit commitment pattern");
         return Err(CoinbaseError::InvalidCommitmentLength);
     }
     let script_bytes = commitment_bytes.to_vec();
@@ -374,7 +376,7 @@ pub fn build_braidpool_coinbase_from_template(
             &components.coinbase_commitment,
         )?)
     } else {
-        log::warn!("No SegWit commitment found in block template components");
+        warn!("No SegWit commitment found in block template components");
         None
     };
 
@@ -389,7 +391,7 @@ pub fn build_braidpool_coinbase_from_template(
 
     let reward_payout = TxOut {
         value: Amount::from_sat(total_available).map_err(|e| {
-            log::error!("Amount conversion failed: {}", e);
+            error!("Amount conversion failed: {}", e);
             CoinbaseError::InvalidBlockTemplateData
         })?,
         script_pubkey: payout_address.script_pubkey(),
@@ -491,7 +493,7 @@ pub fn build_complete_block(
 
     let expected_min_size = 80 + varint_size + new_coinbase_bytes.len();
     if complete_block.len() < expected_min_size {
-        log::error!(
+        error!(
             "Block too small: {} bytes, expected >= {}",
             complete_block.len(),
             expected_min_size
@@ -717,7 +719,7 @@ mod tests {
                     assert_eq!(empty_result, coinbase_txid.to_byte_array());
                 }
                 Err(e) => {
-                    println!("Invalid coinbase bytes: {}", e);
+                    error!("Invalid coinbase bytes: {}", e);
                 }
             }
         }
