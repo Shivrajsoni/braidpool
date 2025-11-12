@@ -98,7 +98,7 @@ impl DBHandler {
             hex::encode(bead.uncommitted_metadata.extra_nonce_2.to_be_bytes());
         let block_header_bytes = bead.block_header.block_hash().to_byte_array().to_vec();
         let prev_block_hash_bytes = bead.block_header.prev_blockhash.to_byte_array().to_vec();
-        let merkel_root_bytes = bead.block_header.merkle_root.to_byte_array().to_vec();
+        let merkle_root_bytes = bead.block_header.merkle_root.to_byte_array().to_vec();
         let payout_addr_bytes = bead.committed_metadata.payout_address.as_bytes().to_vec();
         let public_key_bytes = bead.committed_metadata.comm_pub_key.to_vec();
         let signature_bytes = bead.uncommitted_metadata.signature.to_vec();
@@ -109,7 +109,7 @@ impl DBHandler {
             .bind(block_header_bytes)
             .bind(bead.block_header.version.to_consensus())
             .bind(prev_block_hash_bytes)
-            .bind(merkel_root_bytes)
+            .bind(merkle_root_bytes)
             .bind(bead.block_header.time.to_u32())
             .bind(bead.block_header.bits.to_consensus())
             .bind(bead.block_header.nonce)
@@ -479,7 +479,7 @@ pub async fn fetch_bead_by_bead_hash(
                     });
                 }
             };
-            let merkel_hash = match row.get::<Vec<u8>, _>("hashMerkleRoot").try_into() {
+            let merkle_hash = match row.get::<Vec<u8>, _>("hashMerkleRoot").try_into() {
                 Ok(arr) => TxMerkleNode::from_byte_array(arr),
                 Err(_) => {
                     return Err(DBErrors::TupleAttributeParsingError {
@@ -515,7 +515,7 @@ pub async fn fetch_bead_by_bead_hash(
             fetched_bead.committed_metadata.payout_address = payout_address;
             fetched_bead.block_header.prev_blockhash = prev_block_hash;
             fetched_bead.block_header.nonce = nonce;
-            fetched_bead.block_header.merkle_root = merkel_hash;
+            fetched_bead.block_header.merkle_root = merkle_hash;
             fetched_bead.committed_metadata.comm_pub_key = pub_key;
             fetched_bead.committed_metadata.miner_ip = miner_ip;
             fetched_bead.committed_metadata.min_target = min_target;
@@ -766,7 +766,7 @@ pub mod test {
                 hex::encode(bead.uncommitted_metadata.extra_nonce_2.to_be_bytes());
             let block_header_bytes = bead.block_header.block_hash().to_byte_array().to_vec();
             let prev_block_hash_bytes = bead.block_header.prev_blockhash.to_byte_array().to_vec();
-            let merkel_root_bytes = bead.block_header.merkle_root.to_byte_array().to_vec();
+            let merkle_root_bytes = bead.block_header.merkle_root.to_byte_array().to_vec();
             let payout_addr_bytes = bead.committed_metadata.payout_address.as_bytes().to_vec();
             let public_key_bytes = bead.committed_metadata.comm_pub_key.to_vec();
             let signature_bytes = bead.uncommitted_metadata.signature.to_vec();
@@ -776,7 +776,7 @@ pub mod test {
                 .bind(block_header_bytes)
                 .bind(bead.block_header.version.to_consensus())
                 .bind(prev_block_hash_bytes)
-                .bind(merkel_root_bytes)
+                .bind(merkle_root_bytes)
                 .bind(bead.block_header.time.to_u32())
                 .bind(bead.block_header.bits.to_consensus())
                 .bind(bead.block_header.nonce)

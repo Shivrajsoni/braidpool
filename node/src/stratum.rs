@@ -484,17 +484,17 @@ impl DownstreamClient {
             bitcoin::Transaction::consensus_decode(&mut coinbase_cursor).unwrap();
 
         //computing merkle new merkle path due to updated coinbase transaction
-        let mut merkel_branches_bytes: Vec<Vec<u8>> = Vec::new();
-        for merkel_branch in submitted_job.coinbase_merkel_path.clone() {
-            let mut merkel_branch_bytes: [u8; 32] = [0u8; 32];
-            //Computing hex of merkel branch in big-endian as expected by the miner
-            hex::decode_to_slice(merkel_branch, &mut merkel_branch_bytes).unwrap();
-            merkel_branches_bytes.push(Vec::from(merkel_branch_bytes));
+        let mut merkle_branches_bytes: Vec<Vec<u8>> = Vec::new();
+        for merkle_branch in submitted_job.coinbase_merkle_path.clone() {
+            let mut merkle_branch_bytes: [u8; 32] = [0u8; 32];
+            //Computing hex of merkle branch in big-endian as expected by the miner
+            hex::decode_to_slice(merkle_branch, &mut merkle_branch_bytes).unwrap();
+            merkle_branches_bytes.push(Vec::from(merkle_branch_bytes));
         }
-        let merkel_root_bytes =
-            calculate_merkle_root(coinbase_tx.compute_txid(), merkel_branches_bytes.as_slice());
+        let merkle_root_bytes =
+            calculate_merkle_root(coinbase_tx.compute_txid(), merkle_branches_bytes.as_slice());
         //Computing the newly constructed merkle root via the merkle path
-        let merkle_root = TxMerkleNode::from_byte_array(merkel_root_bytes);
+        let merkle_root = TxMerkleNode::from_byte_array(merkle_root_bytes);
 
         //Applying version mask received during mining.configure
         // Job version
@@ -1034,7 +1034,7 @@ pub struct JobDetails {
     pub blocktemplate: BlockTemplate,
     pub coinbase1: String,
     pub coinbase2: String,
-    pub coinbase_merkel_path: Vec<String>,
+    pub coinbase_merkle_path: Vec<String>,
     pub coinbase_witness_commitment: Option<Witness>,
     //Unix timestamp at which current job was sent to downstream miner
     pub job_sent_time: u32,
@@ -1222,7 +1222,7 @@ impl Notifier {
             &deserialized_coinbase[separator_pos + (EXTRANONCE1_SIZE + EXTRANONCE2_SIZE)..],
         );
         debug!(prefix_len = %coinbase_1.len(), suffix_len = %coinbase_2.len(), "Split coinbase transaction");
-        //Constructing merkel root via merkel path .
+        //Constructing merkle root via merkle path .
         let mut merkle_branches: Vec<String> = Vec::new();
         let mut txids_hashes: Vec<Txid> = vec![];
         for tx in notified_template.transactions {
@@ -1237,8 +1237,8 @@ impl Notifier {
             }
         }
         info!(
-            "merkle branches for the given template's coinbase are respectively - {:?}",
-            merkle_branches
+            merkle_branches = ?merkle_branches,
+            "Merkle branches for the given template's coinbase are"
         );
         //Stratum accepts the prev block hash to be in little endian instead of big endian
         //therefore byte by byte reversal is required here .
@@ -1352,7 +1352,7 @@ impl Notifier {
                             blocktemplate: template_for_job,
                             coinbase1: job_notification.coinbase1.clone(),
                             coinbase2: job_notification.coinbase2.clone(),
-                            coinbase_merkel_path: job_notification.merkle_branches.clone(),
+                            coinbase_merkle_path: job_notification.merkle_branches.clone(),
                             coinbase_witness_commitment: job_notification
                                 .coinbase_witness_commitment,
                             job_sent_time: unix_timestamp,
@@ -1473,7 +1473,7 @@ impl Notifier {
                                     blocktemplate: latest_template_ref,
                                     coinbase1: job.coinbase1.clone(),
                                     coinbase2: job.coinbase2.clone(),
-                                    coinbase_merkel_path: job.merkle_branches.clone(),
+                                    coinbase_merkle_path: job.merkle_branches.clone(),
                                     coinbase_witness_commitment: job.coinbase_witness_commitment,
                                     job_sent_time: unix_timestamp,
                                 };
@@ -2034,10 +2034,10 @@ mod test {
         let (swarm_handler, mut swarm_command_receiver) =
             SwarmHandler::new(Arc::clone(&test_braid), test_db_tx);
         let swarm_handler_arc = Arc::new(Mutex::new(swarm_handler));
-        let test_merkel_bytes: [u8; 32] = [0u8; 32];
+        let test_merkle_bytes: [u8; 32] = [0u8; 32];
         let mut test_witness = Witness::new();
         test_witness.push(vec![0u8; 32]);
-        //Little more doubt in construction of initial coinbase only and in merkel which can be due to coinbase only
+        //Little more doubt in construction of initial coinbase only and in merkle which can be due to coinbase only
         //There is a case in prevblockhash too but it can be discussed afterwards
         //Cleaning up connection channels from connection mapping as well as from global map arc of stratum server
         let test_coinbase_transaction: Transaction = Transaction {
@@ -2087,7 +2087,7 @@ mod test {
                 "000000004357ac765395ad29220608af219e3090d75076f160bae2a195b3ebe6",
             )
             .unwrap(),
-            merkle_root: TxMerkleNode::from_byte_array(test_merkel_bytes),
+            merkle_root: TxMerkleNode::from_byte_array(test_merkle_bytes),
         };
         let mut test_template = BlockTemplate {
             version: test_template_header.version,
@@ -2117,7 +2117,7 @@ mod test {
             blocktemplate: test_template,
             coinbase1: constructed_test_notification_ref.clone().coinbase1.clone(),
             coinbase2: constructed_test_notification_ref.clone().coinbase2.clone(),
-            coinbase_merkel_path: vec![],
+            coinbase_merkle_path: vec![],
             coinbase_witness_commitment: Some(test_witness),
             job_sent_time: unix_timestamp,
         };
@@ -2177,7 +2177,7 @@ mod test {
         );
     }
     #[test]
-    fn test_merkel_root_construction() {
+    fn test_merkle_root_construction() {
         let coinbase_string_non_segwit = "02000000010000000000000000000000000000000000000000000000000000000000000000ffffffff170305190408ac53db1b00000000094272616964706f6f6cffffffff03c81d039500000000160014af0ce4a33e61762bde14de428440a9def7acc9310000000000000000266a24aa21a9edac3e72f41e3e7cda29fa3e372e7209108db9c2b2bff9e7b51fdffb10b89a9e4300000000000000002a6a286272616964706f6f6c5f626561645f6d657461646174615f686173685f333262010203040506070800000000";
         let coinbase_bytes = hex::decode(coinbase_string_non_segwit).unwrap();
         let mut cursor = Cursor::new(coinbase_bytes);
@@ -2185,24 +2185,24 @@ mod test {
         let coinbase_wtxid = coinbase_tx.compute_wtxid();
         let coinbase_txid = coinbase_tx.compute_txid();
         assert_eq!(coinbase_txid.to_string(), coinbase_wtxid.to_string());
-        let test_merkel_branches = [
+        let test_merkle_branches = [
             "0ce0d53011438c88cdff30f6312ca67d87bf14fb39e449a5cf90cd369d750e21",
             "562d5094b1362ac66b126a910908eea2a17b06891483ee90447914dcad65c96b",
             "d485ae53320318f499c91e3b8899c004d10ba358aa143ace70aab9f4448aac0e",
             "37aabcd6778b0a07f06c7d9f5f12ca156b679bdf69f1c6327a06d30c0002b49d",
             "408040846f74ad0a82e58a17431b8fde5f62e5e913f34ffe21e29b907eda7e0f",
         ];
-        let mut merkel_branches_serialized: Vec<Vec<u8>> = Vec::new();
-        for merkle_branch_str in test_merkel_branches {
-            let mut merkel_branch_bytes: [u8; 32] = [0u8; 32];
-            hex::decode_to_slice(merkle_branch_str, &mut merkel_branch_bytes).unwrap();
-            merkel_branches_serialized.push(Vec::from(merkel_branch_bytes));
+        let mut merkle_branches_serialized: Vec<Vec<u8>> = Vec::new();
+        for merkle_branch_str in test_merkle_branches {
+            let mut merkle_branch_bytes: [u8; 32] = [0u8; 32];
+            hex::decode_to_slice(merkle_branch_str, &mut merkle_branch_bytes).unwrap();
+            merkle_branches_serialized.push(Vec::from(merkle_branch_bytes));
         }
-        debug!("Merkel branches bytes - {:?}", merkel_branches_serialized);
-        let merkel_root_bytes =
-            calculate_merkle_root(coinbase_txid, &merkel_branches_serialized.as_slice());
-        let mr = TxMerkleNode::from_byte_array(merkel_root_bytes);
-        debug!("Merkel root - {:?}", mr.to_string());
+        debug!("Merkle branches bytes - {:?}", merkle_branches_serialized);
+        let merkle_root_bytes =
+            calculate_merkle_root(coinbase_txid, &merkle_branches_serialized.as_slice());
+        let mr = TxMerkleNode::from_byte_array(merkle_root_bytes);
+        debug!("Merkle root - {:?}", mr.to_string());
         assert_eq!(
             mr.to_string(),
             "690699e45d09d84d81cb58a4f8ba734e7fc90856d8b24524797f9a54ff57b1a1".to_string()
