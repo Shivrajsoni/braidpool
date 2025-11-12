@@ -757,20 +757,14 @@ impl DownstreamClient {
                 return Err(error);
             }
         };
-        let password_res: Result<&str, StratumErrors> = match param_array.get(1) {
-            Some(pass) => Ok(pass.as_str().unwrap()),
-            None => Err(StratumErrors::ParamNotFound {
+        // Validate password parameter exists (but don't log it)
+        if param_array.get(1).is_none() {
+            return Err(StratumErrors::ParamNotFound {
                 param: "password".to_string(),
                 method: "mining.authorize".to_string(),
-            }),
-        };
+            });
+        }
 
-        let _password = match password_res {
-            Ok(password_value) => password_value,
-            Err(error) => {
-                return Err(error);
-            }
-        };
         self.authorized = true;
         info!(username = %username, "Miner authorized");
         Ok(StratumResponses::StandardResponse {
@@ -1256,10 +1250,6 @@ impl Notifier {
                 return Err(error);
             }
         };
-        info!(
-            "Converting the prev block hash to little endian done -- {:?}",
-            prev_block_hash_little_endian
-        );
         let bitcoin_block_version = notified_template.version.to_consensus();
         let bits = notified_template.bits;
         let time = notified_template.curtime.to_u32();
@@ -1304,7 +1294,7 @@ impl Notifier {
         latest_template_merkle_branch_arc: &mut Arc<Mutex<Vec<Vec<u8>>>>,
         latest_template_id: Arc<Mutex<String>>,
     ) -> Result<(), StratumErrors> {
-        info!("Notifier task started");
+        debug!("Stratum notifier task started");
         while let Some(notification_command) = self.notification_receiver.recv().await {
             match notification_command {
                 //Whenever a new template is received it is broadcasted across all the downstream nodes connected .
@@ -1704,12 +1694,12 @@ impl Server {
         loop {
             tokio::select! {
                 Some(message) = downstream_receiver.recv()=>{
-                    info!(message = ?message, peer = %peer_addr, "Sending message to miner");
+                    debug!(message = ?message, peer = %peer_addr, "Sending message to miner");
                     //Sending the notifications of new job to the downstream
                     let write_or_not = stream_writer.write_all(format!("{}\n",message).as_bytes()).await;
                     match write_or_not{
                         Ok(_)=>{
-                            info!(peer = %peer_addr, "Response written to stream");
+                            debug!(peer = %peer_addr, "Response written to stream");
 
                         },
                         Err(error)=>{
@@ -1723,7 +1713,7 @@ impl Server {
                             if line.is_empty() {
                                 continue;
                             }
-                            info!(line = %line, peer = %peer_addr, "Read line from miner");
+                            debug!(line = %line, peer = %peer_addr, "Read line from miner");
                         //Parsing the lines read from buffer to find out whether they are valid JSON request type to be server as per
                         //stratum or not .
                         match serde_json::from_str::<StandardRequest>(&line) {
@@ -1739,7 +1729,12 @@ impl Server {
                          }
                                 }
                                 Err(e) => {
-                                    error!("Failed to parse JSON from {}: {}. Line: '{}'", peer_addr, e, line);
+                                    error!(
+                                        peer = %peer_addr,
+                                        error = %e,
+                                        line = %line,
+                                        "Failed to parse JSON"
+                                    );
                                 }
                             }
 

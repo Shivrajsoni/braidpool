@@ -1029,14 +1029,28 @@ impl SharedBitcoinClient {
                 {
                     Ok(result) => {
                         if result.success {
-                            info!("Block submitted successfully!");
+                            info!(
+                                version = %version,
+                                timestamp = %timestamp,
+                                nonce = %nonce,
+                                "Block submitted successfully"
+                            );
                         } else {
-                            error!("Block submission failed: {}", result.reason);
+                            error!(
+                                reason = %result.reason,
+                                version = %version,
+                                timestamp = %timestamp,
+                                "Block submission rejected by Bitcoin Core"
+                            );
                         }
                         let _ = response.send(Ok(result));
                     }
                     Err(e) => {
-                        error!("Submit solution IPC error: {}", e);
+                        error!(
+                            error = %e,
+                            operation = "submit_solution",
+                            "Block submission IPC error"
+                        );
                         let _ = response.send(Err(e.to_string()));
                     }
                 }

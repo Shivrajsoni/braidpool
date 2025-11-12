@@ -50,7 +50,11 @@ pub async fn init_db() -> Result<SqlitePool, DBErrors> {
         .journal_mode(sqlx::sqlite::SqliteJournalMode::Wal);
     //Initializing connection to existing DB
     let conn = if db_exists {
-        info!("Database already exists at {:?}", db_path);
+        info!(
+            db_path = %db_path.display(),
+            exists = true,
+            "Using existing database"
+        );
         let pool = match SqlitePool::connect_with(sql_lite_connections).await {
             Ok(initialized_pool) => initialized_pool,
             Err(error) => {
@@ -72,7 +76,10 @@ pub async fn init_db() -> Result<SqlitePool, DBErrors> {
         };
         let _query_result = match pool.execute(SCHEMA_SQL).await {
             Ok(_res) => {
-                info!("Schema initialized successfully at {:?}", db_path);
+                info!(
+                    db_path = %db_path.display(),
+                    "Database schema initialized"
+                );
             }
             Err(error) => {
                 return Err(DBErrors::SchemaNotInitialized {

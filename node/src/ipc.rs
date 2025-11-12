@@ -137,7 +137,11 @@ pub async fn ipc_block_listener(
                         error!(error = %e, "Failed to get initial template");
                         match classify_error(&e) {
                             ErrorKind::ConnectionBroken => {
-                                error!("Connection lost - reconnecting");
+                                error!(
+                                    socket = %ipc_socket_path,
+                                    operation = "get_template",
+                                    "Connection lost - reconnecting"
+                                );
                                 continue; // Restart connection loop
                             }
                             ErrorKind::Temporary | ErrorKind::LogicError => {
@@ -152,13 +156,13 @@ pub async fn ipc_block_listener(
             let mut notification_receiver = match shared_client.take_notification_receiver() {
                 Some(receiver) => receiver,
                 None => {
-                    error!("Failed to get notification receiver - reconnecting");
+                    error!(socket = %ipc_socket_path, "Failed to get notification receiver - reconnecting");
                     tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
                     continue;
                 }
             };
 
-            info!("Listening for block notifications");
+            info!(socket = %ipc_socket_path, "Listening for block notifications");
 
             // Listen for block connect notifications only
             let should_reconnect = loop {
@@ -199,7 +203,12 @@ pub async fn ipc_block_listener(
                                                     error!(error = %e, height = height, "Failed to get block template");
                                                     match classify_error(&e) {
                                                         ErrorKind::ConnectionBroken => {
-                                                            error!(height = height, "Connection lost - restarting");
+                                                            error!(
+                                                                height = height,
+                                                                socket = %ipc_socket_path,
+                                                                operation = "get_template",
+                                                                "Connection lost - restarting"
+                                                            );
                                                             break true;
                                                         }
                                                         ErrorKind::Temporary => {
@@ -219,7 +228,11 @@ pub async fn ipc_block_listener(
                                         error!(error = %e, height = height, "Sync check failed");
                                         match classify_error(&e) {
                                             ErrorKind::ConnectionBroken => {
-                                                error!("Connection lost during sync check");
+                                                error!(
+                                    socket = %ipc_socket_path,
+                                    operation = "sync_check",
+                                    "Connection lost during sync check"
+                                );
                                                 break true;
                                             }
                                             ErrorKind::Temporary => {
@@ -330,10 +343,19 @@ pub async fn ipc_block_listener(
                             Ok(_) => {
                             }
                             Err(e) => {
-                                error!(error = %e, "Connection health check failed");
+                                error!(
+                                    error = %e,
+                                    socket = %ipc_socket_path,
+                                    operation = "health_check",
+                                    "Connection health check failed"
+                                );
                                 match classify_error(&e) {
                                     ErrorKind::ConnectionBroken => {
-                                        error!("Dead connection detected - reconnecting");
+                                        error!(
+                                            socket = %ipc_socket_path,
+                                            operation = "health_check",
+                                            "Dead connection detected - reconnecting"
+                                        );
                                         break true;
                                     }
                                     ErrorKind::Temporary => {
@@ -423,19 +445,19 @@ async fn get_template_with_retry(
                                 return Ok(processed_template);
                             } else if attempt == max_attempts {
                                 warn!(
-                                    "{}: Template too small ({} bytes) after {} attempts, using anyway",
-                                    context,
-                                    hex.len(),
-                                    max_attempts
+                                    context = %context,
+                                    size_bytes = %hex.len(),
+                                    max_attempts = %max_attempts,
+                                    "Template too small after max attempts - using anyway"
                                 );
                                 return Ok(processed_template);
                             } else {
                                 warn!(
-                                    "{}: Template too small ({} bytes), retrying... (attempt {}/{})",
-                                    context,
-                                    hex.len(),
-                                    attempt,
-                                    max_attempts
+                                    context = %context,
+                                    size_bytes = %hex.len(),
+                                    attempt = %attempt,
+                                    max_attempts = %max_attempts,
+                                    "Template too small - retrying"
                                 );
                             }
                         }
@@ -449,15 +471,20 @@ async fn get_template_with_retry(
 
                         if attempt == max_attempts {
                             if let Some(template) = last_template {
-                                warn!("{}: Final attempt failed, using last template", context);
+                                warn!(
+                                    context = %context,
+                                    "Final attempt failed - using last template"
+                                );
                                 return Ok(template);
                             }
                             return Err(Box::new(e));
                         }
 
                         warn!(
-                            "{}: Attempt {} failed: {}, retrying...",
-                            context, attempt, e
+                            context = %context,
+                            attempt = %attempt,
+                            error = %e,
+                            "Template fetch attempt failed - retrying"
                         );
                     }
                 }

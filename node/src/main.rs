@@ -275,9 +275,12 @@ async fn main() -> Result<(), Box<dyn Error>> {
             "regtest" => Network::Regtest,
             "cpunet" => Network::CPUNet,
             _ => {
-                error!(network = %network_name, "Invalid network specified");
-                info!("Valid options: main, testnet, testnet4, signet, regtest, cpunet");
-                info!("Falling back to regtest network");
+                error!(
+                    network = %network_name,
+                    valid_networks = "main, testnet, testnet4, signet, regtest, cpunet",
+                    "Invalid network specified"
+                );
+                info!(fallback = "regtest", "Using fallback network");
                 Network::Regtest
             }
         }
@@ -352,8 +355,8 @@ async fn main() -> Result<(), Box<dyn Error>> {
                     });
 
                     tokio::select! {
-                        _ = listener_task => info!("Listener and Submission task completed"),
-                        _ = consumer_task => info!("Template consumer completed"),
+                        _ = listener_task => info!(task = "listener", "IPC listener task completed"),
+                        _ = consumer_task => info!(task = "consumer", "Template consumer task completed"),
                         _ = ipc_task_token.cancelled() => {
                             info!("IPC task shutting down - cancellation token triggered");
                         }
@@ -390,36 +393,40 @@ async fn main() -> Result<(), Box<dyn Error>> {
                          },
                      )) => {
                          info!(
-                             "Routing updated for peer: {peer}, new: {is_new_peer}, addresses: {:?}, bucket: {:?}, old_peer: {:?}",
-                             addresses, bucket_range, old_peer
+                             peer = %peer,
+                             is_new = %is_new_peer,
+                             addresses = ?addresses,
+                             bucket = ?bucket_range,
+                             old_peer = ?old_peer,
+                             "DHT routing updated"
                          );
                      }
                      SwarmEvent::Behaviour(BraidPoolBehaviourEvent::BeadAnnounce(
                          floodsub::FloodsubEvent::Subscribed { peer_id, topic },
                      )) => {
                          info!(
-                             "A new peer {:?} subscribed to the topic {:?}",
-                             peer_id,
-                             topic
+                             peer = ?peer_id,
+                             topic = ?topic,
+                             "Peer subscribed to topic"
                          );
                      }
                      SwarmEvent::Behaviour(BraidPoolBehaviourEvent::BeadAnnounce(
                          floodsub::FloodsubEvent::Unsubscribed { peer_id, topic },
                      )) => {
                          info!(
-                             "A peer {:?} unsubscribed from the topic {:?}",
-                             peer_id,
-                             topic
+                             peer = ?peer_id,
+                             topic = ?topic,
+                             "Peer unsubscribed from topic"
                          );
                      }
                      SwarmEvent::Behaviour(BraidPoolBehaviourEvent::BeadAnnounce(
                          floodsub::FloodsubEvent::Message(message),
                      )) => {
                          info!(
-                             "{:?} Message has been recieved  from the peer {:?} and having data {:?}",
-                             message.topics,
-                             message.source,
-                             message.data
+                             topics = ?message.topics,
+                             source = ?message.source,
+                             size_bytes = %message.data.len(),
+                             "Floodsub message received"
                          );
                          let result_bead: Result<Bead, bitcoin::consensus::DeserializeError> =
                              deserialize(&message.data);
@@ -458,12 +465,12 @@ async fn main() -> Result<(), Box<dyn Error>> {
                          }
                      }
                      SwarmEvent::NewListenAddr { address, .. } => {
-                         info!("Listening on {:?}", address)
+                         info!(address = ?address, "P2P listening on address")
                      }
                      SwarmEvent::Behaviour(BraidPoolBehaviourEvent::Identify(
                          identify::Event::Sent { peer_id, .. },
                      )) => {
-                         info!(peer = ?peer_id, "Sent identify info");
+                         debug!(peer = ?peer_id, "Sent identify info");
                      }
                      SwarmEvent::Behaviour(BraidPoolBehaviourEvent::Identify(
                          identify::Event::Received { peer_id, info,  .. },
@@ -489,8 +496,8 @@ async fn main() -> Result<(), Box<dyn Error>> {
                          {
 
                              info!(
-                                 "The peer listening at {:?}  does not support FLOODSUB",
-                                 info_reference.observed_addr
+                                 peer_address = ?info_reference.observed_addr,
+                                 "Peer does not support floodsub"
                              );
                          }
                          debug!(info = ?info_reference, "Received peer info");
@@ -509,7 +516,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
                         }))=>{
                             info!(peer = ?peer, "Peer received during bootstrap");
                         }
-                         _ => info!("Other query result: {:?}", result),
+                         _ => info!(result = ?result, "Other DHT query result"),
                      },
                      SwarmEvent::Behaviour(BraidPoolBehaviourEvent::Identify(
                          identify::Event::Error {
@@ -525,14 +532,22 @@ async fn main() -> Result<(), Box<dyn Error>> {
                          result,
                          ..
                      })) => {
-                         info!(
-                             "Ping result for peer {}: {:?}",
-                             peer,
-                             match result {
-                                 Ok(latency) => format!("Latency: {} ms", latency.as_millis()),
-                                 Err(err) => format!("Error: {}", err),
+                         match result {
+                             Ok(latency) => {
+                                 info!(
+                                     peer = %peer,
+                                     latency_ms = %latency.as_millis(),
+                                     "Ping successful"
+                                 );
                              }
-                         );
+                             Err(err) => {
+                                 warn!(
+                                     peer = %peer,
+                                     error = %err,
+                                     "Ping failed"
+                                 );
+                             }
+                         }
                      }
                      SwarmEvent::ConnectionEstablished {
                          peer_id, endpoint, ..
@@ -585,10 +600,10 @@ async fn main() -> Result<(), Box<dyn Error>> {
                          },
                      )) => {
                          info!(
-                             "Received bead sync message from peer: {}: {:?}. Connection-id: {:?}",
-                             peer,
-                             message,
-                             connection_id
+                             peer = %peer,
+                             message = ?message,
+                             connection = ?connection_id,
+                             "Bead sync message received"
                          );
                          match message {
                              request_response::Message::Request {
@@ -683,13 +698,17 @@ async fn main() -> Result<(), Box<dyn Error>> {
                                          };
                                          match status {
                                              braid::GenesisCheckStatus::GenesisBeadsValid => {
-                                                 info!("Genesis beads validated");
+                                                 info!(count = %genesis.len(), "Genesis beads validated");
                                              }
                                              braid::GenesisCheckStatus::MissingGenesisBead => {
-                                                 warn!("Missing genesis bead");
+                                                 warn!(peer = %peer, "Missing genesis bead");
                                              }
                                              braid::GenesisCheckStatus::GenesisBeadsCountMismatch => {
-                                                 warn!("Genesis bead count mismatch");
+                                                 warn!(
+                                                     received = %genesis.len(),
+                                                     peer = %peer,
+                                                     "Genesis bead count mismatch"
+                                                 );
                                              }
                                          }
                                      }
@@ -716,7 +735,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
                              .behaviour_mut()
                              .bead_announce
                              .publish(current_broadcast_topic.clone(), bead_bytes);
-                        info!("Published bead to floodsub topic");
+                        info!(topic = ?current_broadcast_topic, "Published bead to floodsub topic");
                      }
                  }
              }
@@ -724,16 +743,16 @@ async fn main() -> Result<(), Box<dyn Error>> {
         }
     });
 
-    //gracefull shutdown via `Cancellation token`
+    //graceful shutdown via `Cancellation token`
     let shutdown_signal = tokio::signal::ctrl_c().await;
     match shutdown_signal {
         Ok(_) => {
-            info!("Closing database connection pool");
+            info!(component = "database", "Closing connection pool");
             let pool = db_connection_pool.lock().await;
             //Closing all the existing connections to pool and committing from .db-wal to .db
             pool.close().await;
-            info!("Database connections closed");
-            info!("Shutting down network swarm");
+            info!(component = "database", "Connections closed");
+            info!(component = "swarm", "Shutting down network swarm");
             swarm_handle.abort();
             tokio::time::sleep(Duration::from_millis(1)).await;
             #[allow(unused)]
@@ -742,7 +761,10 @@ async fn main() -> Result<(), Box<dyn Error>> {
                 .await
             {
                 Ok(_) => {
-                    info!("Sub-tasks interrupted - waiting for graceful shutdown");
+                    info!(
+                        component = "shutdown",
+                        "Sub-tasks interrupted - waiting for graceful shutdown"
+                    );
                     main_task_token.cancel();
                 }
                 Err(error) => {
@@ -752,8 +774,9 @@ async fn main() -> Result<(), Box<dyn Error>> {
         }
         Err(error) => {
             error!(
-                "An error occurred while shutting down the braid node {:?}",
-                error
+                error = ?error,
+                component = "shutdown",
+                "Shutdown signal error"
             );
         }
     }

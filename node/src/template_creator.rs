@@ -391,7 +391,7 @@ pub fn build_braidpool_coinbase_from_template(
 
     let reward_payout = TxOut {
         value: Amount::from_sat(total_available).map_err(|e| {
-            error!("Amount conversion failed: {}", e);
+            error!(error = %e, "Amount conversion failed");
             CoinbaseError::InvalidBlockTemplateData
         })?,
         script_pubkey: payout_address.script_pubkey(),
@@ -719,7 +719,7 @@ mod tests {
                     assert_eq!(empty_result, coinbase_txid.to_byte_array());
                 }
                 Err(e) => {
-                    error!("Invalid coinbase bytes: {}", e);
+                    error!(error = %e, "Invalid coinbase bytes");
                 }
             }
         }
