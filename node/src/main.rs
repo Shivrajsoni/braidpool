@@ -449,7 +449,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
                                              ),
                                          );
                                      } else {
-                                         warn!("No peers available to request parent beads");
+                                         warn!(parent_count = %bead.committed_metadata.parents.len(), "Insufficient peers for bead sync");
                                      }
                                  } else if let braid::AddBeadStatus::InvalidBead = status {
                                      // update the peer manager about the invalid bead

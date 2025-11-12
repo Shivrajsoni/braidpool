@@ -36,8 +36,9 @@ pub async fn ipc_block_listener(
     >,
 ) -> Result<(), Box<dyn std::error::Error>> {
     info!(
-        "Starting IPC block listener on: {} for network: {}",
-        ipc_socket_path, network
+        socket = %ipc_socket_path,
+        network = %network,
+        "IPC block listener started"
     );
     let local = tokio::task::LocalSet::new();
     local.run_until(async move {
@@ -81,7 +82,7 @@ pub async fn ipc_block_listener(
                                 continue;
                             }
                             ErrorKind::ConnectionBroken => {
-                                error!("Connection broken during sync check");
+                                error!(error = %e, context = "sync_check", "Connection broken during sync check");
                                 break Err(ErrorKind::ConnectionBroken);
                             }
                             ErrorKind::LogicError => {
@@ -252,7 +253,7 @@ pub async fn ipc_block_listener(
                             }
 
                             None => {
-                                error!("Failed to receive notifications - connection lost");
+                                error!(context = "notification_receiver", reason = "channel_closed", "Failed to receive notifications - connection lost");
                                 break true;
                             }
                         }

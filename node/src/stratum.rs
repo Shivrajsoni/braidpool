@@ -624,7 +624,7 @@ impl DownstreamClient {
         //Checking with PoW of the target whether the block sent by downstream is below that or not
         match header.validate_pow(target) {
             Ok(_) => {
-                info!(target = %target.to_hex(), hash = %header.block_hash(), "Header meets target");
+                debug!(target = %target.to_hex(), hash = %header.block_hash(), "Header meets target");
 
                 // If valid block found, send to submission channel
                 if let Some(ref submission_tx) = self.block_submission_tx {
@@ -645,11 +645,11 @@ impl DownstreamClient {
                         }
                     }
                 } else {
-                    warn!("No block submission channel available");
+                    warn!(context = "block_submission", template_id = %template_id, "Channel unavailable - cannot forward valid block");
                 }
             }
             Err(e) => {
-                info!(error = %e, target = %target.to_hex(), "Header does not meet target");
+                debug!(error = %e, target = %target.to_hex(), "Header does not meet target");
                 return Ok(StratumResponses::StandardResponse {
                     std_response: StandardResponse::new_ok(Some(client_request_id), json!(false)),
                 });
@@ -673,7 +673,7 @@ impl DownstreamClient {
             .await
         {
             Ok(_) => {
-                info!("Candidate block sent successfully");
+                info!(job_id = %numeric_job_id, template_id = %template_id, peer = %self.downstream_ip, "Candidate block submitted");
                 Ok(StratumResponses::StandardResponse {
                     std_response: StandardResponse::new_ok(Some(client_request_id), json!(true)),
                 })
@@ -1331,7 +1331,7 @@ impl Notifier {
                         {
                             Ok(job) => job,
                             Err(e) => {
-                                error!(peer = %peer_adr, error = %e, template_id = %template_id, "Failed to construct job for peer");
+                                error!(peer = %peer_adr, error = %e, template_id = %template_id, reason = "job_construction_failed", "Failed to construct job for peer");
                                 continue; // Skip this peer but continue with others
                             }
                         };
@@ -1694,12 +1694,12 @@ impl Server {
         loop {
             tokio::select! {
                 Some(message) = downstream_receiver.recv()=>{
-                    debug!(message = ?message, peer = %peer_addr, "Sending message to miner");
+                    trace!(message = ?message, peer = %peer_addr, "Sending message to miner");
                     //Sending the notifications of new job to the downstream
                     let write_or_not = stream_writer.write_all(format!("{}\n",message).as_bytes()).await;
                     match write_or_not{
                         Ok(_)=>{
-                            debug!(peer = %peer_addr, "Response written to stream");
+                            trace!(peer = %peer_addr, "Response written to stream");
 
                         },
                         Err(error)=>{
@@ -1713,7 +1713,7 @@ impl Server {
                             if line.is_empty() {
                                 continue;
                             }
-                            debug!(line = %line, peer = %peer_addr, "Read line from miner");
+                            trace!(line = %line, peer = %peer_addr, "Read line from miner");
                         //Parsing the lines read from buffer to find out whether they are valid JSON request type to be server as per
                         //stratum or not .
                         match serde_json::from_str::<StandardRequest>(&line) {
@@ -1733,7 +1733,8 @@ impl Server {
                                         peer = %peer_addr,
                                         error = %e,
                                         line = %line,
-                                        "Failed to parse JSON"
+                                        error_type = "json_parse",
+                                        "Failed to parse JSON request"
                                     );
                                 }
                             }
@@ -1741,7 +1742,7 @@ impl Server {
 
                         }
                         Some(Err(e)) => {
-                            error!(error = %e, peer = %peer_addr, "Error reading from stream");
+                            error!(error = %e, peer = %peer_addr, fatal = true, "Fatal error reading from stream");
                             return Err(Box::new(StratumErrors::UnableToReadStream { error: e }));
                         }
                         None => {
@@ -1879,7 +1880,7 @@ mod test {
         reader.read_line(&mut response_line).await.unwrap();
 
         let parsed: serde_json::Value = serde_json::from_str(response_line.trim()).unwrap();
-        debug!("Parsed response: {:?}", parsed);
+        println!("Parsed response: {:?}", parsed);
     }
     #[tokio::test]
     async fn test_mining_authorize_response() {
@@ -2101,7 +2102,7 @@ mod test {
             Notifier::construct_job_notification(false, test_template.clone(), "1", vec![])
                 .await
                 .unwrap();
-        debug!(
+        println!(
             "Constructed test notification: {:?}",
             constructed_test_notification
         );
@@ -2162,7 +2163,7 @@ mod test {
                 assert_eq!(json_response, true);
             }
             _ => {
-                warn!("Invalid response received");
+                println!("Invalid response received");
             }
         }
     }
@@ -2198,11 +2199,11 @@ mod test {
             hex::decode_to_slice(merkle_branch_str, &mut merkle_branch_bytes).unwrap();
             merkle_branches_serialized.push(Vec::from(merkle_branch_bytes));
         }
-        debug!("Merkle branches bytes - {:?}", merkle_branches_serialized);
+        println!("Merkle branches bytes - {:?}", merkle_branches_serialized);
         let merkle_root_bytes =
             calculate_merkle_root(coinbase_txid, &merkle_branches_serialized.as_slice());
         let mr = TxMerkleNode::from_byte_array(merkle_root_bytes);
-        debug!("Merkle root - {:?}", mr.to_string());
+        println!("Merkle root - {:?}", mr.to_string());
         assert_eq!(
             mr.to_string(),
             "690699e45d09d84d81cb58a4f8ba734e7fc90856d8b24524797f9a54ff57b1a1".to_string()

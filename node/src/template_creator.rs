@@ -202,18 +202,18 @@ fn find_transaction_end(tx_data: &[u8]) -> Result<usize, CoinbaseError> {
         Ok(tx) => {
             let end_pos = cursor.position() as usize;
             debug!(
-                "Transaction parsing: {} inputs, {} outputs, {} bytes",
-                tx.input.len(),
-                tx.output.len(),
-                end_pos
+                input_count = %tx.input.len(),
+                output_count = %tx.output.len(),
+                bytes = %end_pos,
+                "Transaction parsed"
             );
             Ok(end_pos)
         }
         Err(e) => {
             error!(
-                "Failed to parse transaction: {} (data length: {})",
-                e,
-                tx_data.len()
+                error = %e,
+                data_length = %tx_data.len(),
+                "Transaction parsing failed"
             );
             Err(CoinbaseError::ConsensusDecodeError)
         }
@@ -330,7 +330,7 @@ fn create_segwit_commitment_output(commitment_bytes: &[u8]) -> Result<TxOut, Coi
 
     // Verify it starts with the SegWit commitment pattern
     if commitment_bytes.len() >= 6 && commitment_bytes[2..6] != [0xaa, 0x21, 0xa9, 0xed] {
-        warn!("Invalid SegWit commitment pattern");
+        warn!(commitment_len = %commitment_bytes.len(), expected_pattern = "aa21a9ed", "Invalid SegWit commitment pattern");
         return Err(CoinbaseError::InvalidCommitmentLength);
     }
     let script_bytes = commitment_bytes.to_vec();
@@ -376,7 +376,7 @@ pub fn build_braidpool_coinbase_from_template(
             &components.coinbase_commitment,
         )?)
     } else {
-        warn!("No SegWit commitment found in block template components");
+        warn!(context = "block_template", "SegWit commitment missing (may be expected for non-SegWit blocks)");
         None
     };
 

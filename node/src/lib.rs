@@ -134,7 +134,7 @@ pub async fn ipc_template_consumer(
         let template_bytes = match &ipc_template.processed_block_hex {
             Some(processed_hex) if !processed_hex.is_empty() => processed_hex,
             _ => {
-                warn!("Skipping template: processed_block_hex is missing or empty");
+                warn!(field = "processed_block_hex", "Skipping invalid template - hex payload missing");
                 continue;
             }
         };
@@ -364,7 +364,7 @@ impl SwarmHandler {
         info!(
             status = ?status,
             hash = %weak_share.block_header.block_hash(),
-            "Bead extended successfully"
+            "Braid extended successfully"
         );
         let _db_insertion_command = match self
             .db_command_sender
@@ -376,9 +376,9 @@ impl SwarmHandler {
             .await
         {
             Ok(_) => {
-                info!(
+                debug!(
                     hash = %weak_share.block_header.block_hash(),
-                    "Bead insertion query sent"
+                    "InsertBeadSequentially sent to DB thread"
                 );
             }
             Err(error) => {

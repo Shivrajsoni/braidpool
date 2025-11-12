@@ -91,7 +91,7 @@ impl DBHandler {
         _ancestor_mapping: &HashMap<usize, HashSet<usize>>,
         bead_id: &usize,
     ) -> Result<(), DBErrors> {
-        debug!("Sequential insertion query received");
+        trace!("Sequential insertion query received");
         let hex_converted_extranonce_1 =
             hex::encode(bead.uncommitted_metadata.extra_nonce_1.to_be_bytes());
         let hex_converted_extranonce_2 =
@@ -532,9 +532,9 @@ pub async fn fetch_bead_by_bead_hash(
     {
         Ok(_rows) => {
             if _rows.is_none() == false {
-                debug!("Bead with given bead hash fetched successfully");
+                trace!(bead_hash = %bead_hash, "Bead fetched successfully");
             } else {
-                debug!("No such bead exists");
+                trace!(bead_hash = %bead_hash, "No such bead exists");
             }
         }
         Err(error) => {
