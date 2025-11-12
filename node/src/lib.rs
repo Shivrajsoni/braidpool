@@ -220,7 +220,9 @@ pub async fn ipc_template_consumer(
                 latest_template_merkle_branch.push(branch.clone());
             }
             info!(
-                "Latest template has been updated with the most recently received template from IPC"
+                template_id = %template_id,
+                tx_count = %template_transactions.len(),
+                "Updated latest template from IPC"
             );
 
             let notification_sent_or_not = notifier_tx
@@ -232,14 +234,14 @@ pub async fn ipc_template_consumer(
                 .await;
             match notification_sent_or_not {
                 Ok(_) => {
-                    info!("Template has been sent to the notifier");
+                    info!(template_id = %template_id, "Template sent to notifier");
                 }
                 Err(error) => {
                     error!(error = ?error, "Failed to send template notification");
                 }
             }
         } else {
-            warn!("IPC template too short: 0 bytes");
+            warn!(size_bytes = 0, expected_min = 80, "IPC template too short");
         }
     }
 
@@ -285,7 +287,7 @@ impl SwarmHandler {
             .map(|tx| tx.compute_txid())
             .collect();
         let transaction_ids: Vec<Txid> = Vec::from(ids);
-        info!("Received command for broadcasting bead via floodsub");
+        info!("Broadcasting bead via floodsub");
         //TODO:Currently temprorary placeholder will be replaced in upcoming PRs
         let public_key = "020202020202020202020202020202020202020202020202020202020202020202"
             .parse::<bitcoin::PublicKey>()
@@ -359,7 +361,11 @@ impl SwarmHandler {
             uncommitted_metadata: candidate_block_bead_uncommitted_metadata,
         };
         let status = braid_data.extend(&weak_share);
-        info!(status = ?status, "Bead extended successfully");
+        info!(
+            status = ?status,
+            hash = %weak_share.block_header.block_hash(),
+            "Bead extended successfully"
+        );
         let _db_insertion_command = match self
             .db_command_sender
             .send(BraidpoolDBTypes::InsertTupleTypes {
@@ -370,7 +376,10 @@ impl SwarmHandler {
             .await
         {
             Ok(_) => {
-                info!("Bead insertion query sent");
+                info!(
+                    hash = %weak_share.block_header.block_hash(),
+                    "Bead insertion query sent"
+                );
             }
             Err(error) => {
                 error!(error = ?error, "Database insertion command failed");
@@ -386,14 +395,19 @@ impl SwarmHandler {
             .await
         {
             Ok(_) => {
-                info!("Candidate block sent to swarm after PoW validation");
+                info!(
+                    hash = %weak_share.block_header.block_hash(),
+                    "Candidate block sent to swarm"
+                );
             }
-            Err(error) => {
+            Err(e) => {
                 error!(
-                    "An error occurred while sending candidate block to swarm after PoW validation"
+                    hash = %weak_share.block_header.block_hash(),
+                    error = %e,
+                    "Failed to send candidate block to swarm"
                 );
                 return Err(StratumErrors::CandidateBlockNotSent {
-                    error: error.to_string(),
+                    error: e.to_string(),
                 });
             }
         };

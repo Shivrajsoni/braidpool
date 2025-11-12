@@ -594,23 +594,24 @@ impl BitcoinRpcClient {
                             hash: hash.clone(),
                         };
                         if let Err(e) = notification_sender.send(notification) {
-                            error!(error = %e, "Failed to send tip change notification");
+                            error!(
+                                error = %e,
+                                height = %height,
+                                hash = %bytes_to_hex(&hash),
+                                "Failed to send tip change notification"
+                            );
                             if notification_sender.is_closed() {
-                                error!(
-                                    "Notification channel closed, stopping tip monitoring"
-                                );
+                                error!("Notification channel closed, stopping tip monitoring");
                                 return Err("Notification channel closed".into());
                             }
                         }
                         current_tip = hash;
                     } else {
-                        trace!(
-                            "waitTipChanged returned same tip (timeout or no new blocks)"
-                        );
+                        trace!("waitTipChanged returned same tip (timeout or no new blocks)");
                     }
                 }
                 Err(e) => {
-                    error!("waitTipChanged failed: {}", e);
+                    error!(error = %e, "Tip watcher failed");
                     let _ = notification_sender.send(BitcoinNotification::ConnectionLost {
                         reason: format!("waitTipChanged error: {}", e),
                     });
@@ -877,7 +878,7 @@ impl SharedBitcoinClient {
                                 Some(notif) => {
                                     if let Some(ref sender) = external_notification_sender {
                                         if let Err(e) = sender.send(notif) {
-                                            error!("Failed to forward notification to external receiver: {}", e);
+                                            error!(error = %e, "Failed to forward notification");
                                             break;
                                         }
                                     }
